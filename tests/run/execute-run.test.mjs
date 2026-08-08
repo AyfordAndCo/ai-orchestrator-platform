@@ -65,6 +65,13 @@ test("executes the successful initial run lifecycle", async () => {
   const validator = {
     async validate(value) {
       validatedWorkspace = value;
+
+      return {
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      };
     },
   };
 
@@ -208,6 +215,8 @@ test("fails the run when validation fails", async () => {
 
   assert.deepEqual(result.workspace, workspace);
 
+  assert.equal(result.validationFailure, undefined);
+
   assert.deepEqual(
     result.run.transitions.map(({ from, to }) => ({ from, to })),
     [
@@ -249,7 +258,14 @@ test("normalizes non-Error execution failures", async () => {
   };
 
   const validator = {
-    async validate() {},
+    async validate() {
+      return {
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      };
+    },
   };
 
   const result = await executeRun(request, {

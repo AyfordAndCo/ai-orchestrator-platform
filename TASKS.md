@@ -40,3 +40,23 @@
 - [x] Add worker lifecycle tests
 - [x] Add run tests to `pnpm test`
 - [x] Pass `pnpm validate`
+
+## Workspace Validation — ALL-313
+
+- [x] Define the workspace validation contract
+- [x] Define stable validation error codes
+- [x] Implement `PnpmWorkspaceValidator`
+- [x] Execute only the trusted `pnpm validate` contract
+- [x] Execute validation with `shell: false`
+- [x] Restrict execution to the provisioned workspace path
+- [x] Capture validation stdout, stderr, exit code, and duration
+- [x] Bound captured process output
+- [x] Add validation timeout and process termination
+- [x] Reject missing, non-directory, and symlink workspace paths
+- [x] Preserve typed validation diagnostics at the worker application boundary
+- [x] Keep raw process diagnostics out of the domain run state
+- [x] Wire the real validator through `executePnpmRun`
+- [x] Add temporary-workspace integration coverage
+- [x] Add real worker validation success and failure coverage
+- [x] Independent review completed and findings resolved
+- [x] `pnpm validate` passes with 41 tests
