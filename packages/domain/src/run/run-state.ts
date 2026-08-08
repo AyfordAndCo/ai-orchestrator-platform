@@ -9,7 +9,7 @@ export const runStates = {
 
 export type RunState = (typeof runStates)[keyof typeof runStates];
 
-export const terminalRunStates = new Set<RunState>([
+const terminalRunStates = new Set<RunState>([
   runStates.COMPLETED,
   runStates.FAILED,
 ]);

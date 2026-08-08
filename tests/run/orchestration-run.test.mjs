@@ -332,3 +332,17 @@ test("rejects an invalid run creation timestamp", () => {
     (error) => assertRunError(error, runErrorCodes.INVALID_RUN_TIMESTAMP),
   );
 });
+
+test("classifies only completed and failed states as terminal", () => {
+  assert.equal(isTerminalRunState(runStates.QUEUED), false);
+
+  assert.equal(isTerminalRunState(runStates.PREPARING_WORKSPACE), false);
+
+  assert.equal(isTerminalRunState(runStates.READY), false);
+
+  assert.equal(isTerminalRunState(runStates.VALIDATING), false);
+
+  assert.equal(isTerminalRunState(runStates.COMPLETED), true);
+
+  assert.equal(isTerminalRunState(runStates.FAILED), true);
+});

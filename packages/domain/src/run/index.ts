@@ -1,8 +1,4 @@
-export {
-  runStates,
-  terminalRunStates,
-  isTerminalRunState,
-} from "./run-state.js";
+export { runStates, isTerminalRunState } from "./run-state.js";
 
 export type { RunState } from "./run-state.js";
 
