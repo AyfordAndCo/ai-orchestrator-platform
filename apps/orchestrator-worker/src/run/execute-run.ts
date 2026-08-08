@@ -12,13 +12,25 @@ import type {
   WorkspaceProvisioner,
 } from "../../../../packages/domain/src/workspace/index.js";
 
+import {
+  WorkspaceValidationError,
+  type ValidationErrorCode,
+  type WorkspaceValidator,
+} from "../../../../packages/domain/src/validation/index.js";
+
 export const executionFailureCodes = {
   WORKSPACE_PREPARATION_FAILED: "WORKSPACE_PREPARATION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
 } as const;
 
-export interface RunValidator {
-  validate(workspace: Workspace): Promise<void>;
+export type RunValidator = WorkspaceValidator;
+
+export interface ExecuteRunValidationFailure {
+  readonly code: ValidationErrorCode;
+  readonly message: string;
+  readonly exitCode?: number;
+  readonly stdout?: string;
+  readonly stderr?: string;
 }
 
 export interface ExecuteRunRequest {
@@ -35,6 +47,23 @@ export interface ExecuteRunDependencies {
 export interface ExecuteRunResult {
   run: OrchestrationRun;
   workspace?: Workspace;
+  validationFailure?: ExecuteRunValidationFailure;
+}
+
+function getValidationFailure(
+  error: unknown,
+): ExecuteRunValidationFailure | undefined {
+  if (!(error instanceof WorkspaceValidationError)) {
+    return undefined;
+  }
+
+  return {
+    code: error.code,
+    message: error.message,
+    ...(error.exitCode === undefined ? {} : { exitCode: error.exitCode }),
+    ...(error.stdout === undefined ? {} : { stdout: error.stdout }),
+    ...(error.stderr === undefined ? {} : { stderr: error.stderr }),
+  };
 }
 
 function getFailureMessage(error: unknown): string {
@@ -85,6 +114,8 @@ export async function executeRun(
   try {
     await dependencies.validator.validate(workspace);
   } catch (error) {
+    const validationFailure = getValidationFailure(error);
+
     return {
       run: failRun(
         run,
@@ -95,6 +126,7 @@ export async function executeRun(
         now(),
       ),
       workspace,
+      ...(validationFailure === undefined ? {} : { validationFailure }),
     };
   }
 
