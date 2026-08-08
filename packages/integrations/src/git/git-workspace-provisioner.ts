@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -121,6 +121,23 @@ async function assertSourceRepositoryExists(
 }
 
 async function assertMainWorktree(repositoryPath: string): Promise<void> {
+  const topLevel = await runGit(repositoryPath, [
+    "rev-parse",
+    "--show-toplevel",
+  ]);
+
+  const [resolvedRepositoryPath, resolvedTopLevel] = await Promise.all([
+    realpath(repositoryPath),
+    realpath(topLevel),
+  ]);
+
+  if (resolvedRepositoryPath !== resolvedTopLevel) {
+    throw new WorkspaceProvisioningError(
+      workspaceErrorCodes.SOURCE_REPOSITORY_NOT_MAIN_WORKTREE,
+      `Source repository path must be the main Git worktree root: ${repositoryPath}`,
+    );
+  }
+
   const gitDirectory = await runGit(repositoryPath, ["rev-parse", "--git-dir"]);
 
   const gitCommonDirectory = await runGit(repositoryPath, [
@@ -128,12 +145,10 @@ async function assertMainWorktree(repositoryPath: string): Promise<void> {
     "--git-common-dir",
   ]);
 
-  const resolvedGitDirectory = resolve(repositoryPath, gitDirectory);
-
-  const resolvedGitCommonDirectory = resolve(
-    repositoryPath,
-    gitCommonDirectory,
-  );
+  const [resolvedGitDirectory, resolvedGitCommonDirectory] = await Promise.all([
+    realpath(resolve(repositoryPath, gitDirectory)),
+    realpath(resolve(repositoryPath, gitCommonDirectory)),
+  ]);
 
   if (resolvedGitDirectory !== resolvedGitCommonDirectory) {
     throw new WorkspaceProvisioningError(

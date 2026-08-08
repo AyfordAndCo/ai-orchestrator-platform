@@ -456,3 +456,38 @@ test("does not force-delete a feature branch containing unmerged commits", async
     await cleanup(repository);
   }
 });
+
+test("rejects a subdirectory of the main worktree as the source repository", async () => {
+  const repository = await createTestRepository();
+
+  const sourceSubdirectory = join(repository.sourcePath, "packages");
+
+  try {
+    await mkdir(sourceSubdirectory);
+
+    const provisioner = new GitWorkspaceProvisioner();
+
+    const request = {
+      ...createRequest(repository),
+      repositoryPath: sourceSubdirectory,
+    };
+
+    await assert.rejects(
+      () => provisioner.create(request),
+      (error) => {
+        assert.ok(error instanceof WorkspaceProvisioningError);
+
+        assert.equal(
+          error.code,
+          workspaceErrorCodes.SOURCE_REPOSITORY_NOT_MAIN_WORKTREE,
+        );
+
+        return true;
+      },
+    );
+
+    assert.equal(await pathExists(repository.workspacePath), false);
+  } finally {
+    await cleanup(repository);
+  }
+});
