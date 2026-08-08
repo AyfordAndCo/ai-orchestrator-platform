@@ -26,7 +26,10 @@ const allowedTransitions: Readonly<
   [runStates.PREPARING_WORKSPACE]: [runStates.READY],
   [runStates.READY]: [runStates.EXECUTING],
   [runStates.EXECUTING]: [runStates.VALIDATING],
-  [runStates.VALIDATING]: [runStates.COMPLETED],
+  [runStates.VALIDATING]: [runStates.INSPECTING_CHANGES],
+  [runStates.INSPECTING_CHANGES]: [runStates.COMMITTING],
+  [runStates.COMMITTING]: [runStates.PUSHING],
+  [runStates.PUSHING]: [runStates.COMPLETED],
 };
 
 function requireIdentifier(name: string, value: string): void {

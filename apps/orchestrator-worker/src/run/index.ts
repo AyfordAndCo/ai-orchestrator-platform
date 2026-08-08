@@ -5,6 +5,7 @@ export type {
   ExecuteRunRequest,
   ExecuteRunResult,
   ExecuteRunValidationFailure,
+  ExecuteRunGitFailure,
   RunValidator,
 } from "./execute-run.js";
 

@@ -4,6 +4,14 @@ import type {
 } from "../../../../packages/domain/src/agent-execution/index.js";
 
 import {
+  GitBoundaryError,
+  type GitBoundaryErrorCode,
+  type GitChangeInspectionResult,
+  type GitPublishResult,
+  type GitPublisher,
+} from "../../../../packages/domain/src/git/index.js";
+
+import {
   createOrchestrationRun,
   failRun,
   runStates,
@@ -27,6 +35,7 @@ export const executionFailureCodes = {
   WORKSPACE_PREPARATION_FAILED: "WORKSPACE_PREPARATION_FAILED",
   AGENT_EXECUTION_FAILED: "AGENT_EXECUTION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
+  GIT_BOUNDARY_FAILED: "GIT_BOUNDARY_FAILED",
 } as const;
 
 export type RunValidator = WorkspaceValidator;
@@ -35,6 +44,13 @@ export interface ExecuteRunValidationFailure {
   readonly code: ValidationErrorCode;
   readonly message: string;
   readonly exitCode?: number;
+  readonly stdout?: string;
+  readonly stderr?: string;
+}
+
+export interface ExecuteRunGitFailure {
+  readonly code: GitBoundaryErrorCode;
+  readonly message: string;
   readonly stdout?: string;
   readonly stderr?: string;
 }
@@ -49,6 +65,7 @@ export interface ExecuteRunDependencies {
   readonly workspaceProvisioner: WorkspaceProvisioner;
   readonly agentExecutor: AgentExecutor;
   readonly validator: RunValidator;
+  readonly gitPublisher: GitPublisher;
   readonly now?: () => Date;
 }
 
@@ -57,6 +74,19 @@ export interface ExecuteRunResult {
   readonly workspace?: Workspace;
   readonly agentExecution?: AgentExecutionResult;
   readonly validationFailure?: ExecuteRunValidationFailure;
+  readonly gitInspection?: GitChangeInspectionResult;
+  readonly gitPublish?: GitPublishResult;
+  readonly gitFailure?: ExecuteRunGitFailure;
+}
+
+function getGitFailure(error: unknown): ExecuteRunGitFailure | undefined {
+  if (!(error instanceof GitBoundaryError)) return undefined;
+  return {
+    code: error.code,
+    message: error.message,
+    ...(error.stdout === undefined ? {} : { stdout: error.stdout }),
+    ...(error.stderr === undefined ? {} : { stderr: error.stderr }),
+  };
 }
 
 function getValidationFailure(
@@ -169,11 +199,88 @@ export async function executeRun(
     };
   }
 
+  run = transitionRun(run, runStates.INSPECTING_CHANGES, now());
+
+  let gitInspection: GitChangeInspectionResult;
+  try {
+    gitInspection = await dependencies.gitPublisher.inspect({ workspace });
+  } catch (error) {
+    const gitFailure = getGitFailure(error);
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.GIT_BOUNDARY_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+      agentExecution,
+      ...(gitFailure === undefined ? {} : { gitFailure }),
+    };
+  }
+
+  run = transitionRun(run, runStates.COMMITTING, now());
+
+  let commit;
+  try {
+    commit = await dependencies.gitPublisher.commit({
+      workspace,
+      inspection: gitInspection,
+    });
+  } catch (error) {
+    const gitFailure = getGitFailure(error);
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.GIT_BOUNDARY_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+      agentExecution,
+      gitInspection,
+      ...(gitFailure === undefined ? {} : { gitFailure }),
+    };
+  }
+
+  run = transitionRun(run, runStates.PUSHING, now());
+
+  let gitPublish: GitPublishResult;
+  try {
+    gitPublish = await dependencies.gitPublisher.push({
+      workspace,
+      commit,
+      remote: "origin",
+    });
+  } catch (error) {
+    const gitFailure = getGitFailure(error);
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.GIT_BOUNDARY_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+      agentExecution,
+      gitInspection,
+      ...(gitFailure === undefined ? {} : { gitFailure }),
+    };
+  }
+
   run = transitionRun(run, runStates.COMPLETED, now());
 
   return {
     run,
     workspace,
     agentExecution,
+    gitInspection,
+    gitPublish,
   };
 }

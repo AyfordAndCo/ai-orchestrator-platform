@@ -77,8 +77,19 @@ test("advances through the valid lifecycle and records transition history", () =
     dates.validating,
   );
 
-  const completed = transitionRun(
+  const inspecting = transitionRun(
     validating,
+    runStates.INSPECTING_CHANGES,
+    dates.completed,
+  );
+  const committing = transitionRun(
+    inspecting,
+    runStates.COMMITTING,
+    dates.completed,
+  );
+  const pushing = transitionRun(committing, runStates.PUSHING, dates.completed);
+  const completed = transitionRun(
+    pushing,
     runStates.COMPLETED,
     dates.completed,
   );
@@ -110,6 +121,21 @@ test("advances through the valid lifecycle and records transition history", () =
     },
     {
       from: runStates.VALIDATING,
+      to: runStates.INSPECTING_CHANGES,
+      occurredAt: dates.completed,
+    },
+    {
+      from: runStates.INSPECTING_CHANGES,
+      to: runStates.COMMITTING,
+      occurredAt: dates.completed,
+    },
+    {
+      from: runStates.COMMITTING,
+      to: runStates.PUSHING,
+      occurredAt: dates.completed,
+    },
+    {
+      from: runStates.PUSHING,
       to: runStates.COMPLETED,
       occurredAt: dates.completed,
     },
@@ -256,6 +282,9 @@ test("prevents transitions out of COMPLETED", () => {
 
   run = transitionRun(run, runStates.VALIDATING, dates.validating);
 
+  run = transitionRun(run, runStates.INSPECTING_CHANGES, dates.completed);
+  run = transitionRun(run, runStates.COMMITTING, dates.completed);
+  run = transitionRun(run, runStates.PUSHING, dates.completed);
   run = transitionRun(run, runStates.COMPLETED, dates.completed);
 
   assert.throws(
@@ -362,6 +391,9 @@ test("classifies only completed and failed states as terminal", () => {
   assert.equal(isTerminalRunState(runStates.EXECUTING), false);
 
   assert.equal(isTerminalRunState(runStates.VALIDATING), false);
+  assert.equal(isTerminalRunState(runStates.INSPECTING_CHANGES), false);
+  assert.equal(isTerminalRunState(runStates.COMMITTING), false);
+  assert.equal(isTerminalRunState(runStates.PUSHING), false);
 
   assert.equal(isTerminalRunState(runStates.COMPLETED), true);
 

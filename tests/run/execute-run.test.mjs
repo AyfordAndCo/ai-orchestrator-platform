@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runStates } from "../../dist/packages/domain/src/run/index.js";
+import {
+  GitBoundaryError,
+  gitBoundaryErrorCodes,
+} from "../../dist/packages/domain/src/git/index.js";
 
 import {
   executeRun,
@@ -10,6 +14,7 @@ import {
 
 const request = {
   runId: "run-001",
+  issueTitle: "Test worker lifecycle",
   instruction: "Implement the approved issue specification.",
   workspace: {
     issueId: "ALL-312",
@@ -29,6 +34,24 @@ const agentExecutor = {
     return {
       summary: "Implementation completed",
     };
+  },
+};
+
+const gitPublisher = {
+  async inspect() {
+    return {
+      changes: [{ path: "change.ts", kind: "MODIFIED" }],
+      approvedPaths: ["change.ts"],
+    };
+  },
+  async commit({ inspection }) {
+    return {
+      commitSha: "a".repeat(40),
+      committedPaths: inspection.approvedPaths,
+    };
+  },
+  async push({ workspace, commit, remote }) {
+    return { ...commit, pushedBranch: workspace.featureBranch, remote };
   },
 };
 
@@ -56,6 +79,9 @@ test("executes the successful initial run lifecycle", async () => {
     new Date("2026-08-08T09:03:00.000Z"),
     new Date("2026-08-08T09:04:00.000Z"),
     new Date("2026-08-08T09:05:00.000Z"),
+    new Date("2026-08-08T09:06:00.000Z"),
+    new Date("2026-08-08T09:07:00.000Z"),
+    new Date("2026-08-08T09:08:00.000Z"),
   ];
 
   let provisionedRequest;
@@ -106,6 +132,7 @@ test("executes the successful initial run lifecycle", async () => {
     workspaceProvisioner,
     agentExecutor: successfulAgentExecutor,
     validator,
+    gitPublisher,
     now: createClock(timestamps),
   });
 
@@ -158,6 +185,18 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.VALIDATING,
+        to: runStates.INSPECTING_CHANGES,
+      },
+      {
+        from: runStates.INSPECTING_CHANGES,
+        to: runStates.COMMITTING,
+      },
+      {
+        from: runStates.COMMITTING,
+        to: runStates.PUSHING,
+      },
+      {
+        from: runStates.PUSHING,
         to: runStates.COMPLETED,
       },
     ],
@@ -165,7 +204,7 @@ test("executes the successful initial run lifecycle", async () => {
 
   assert.equal(result.run.createdAt, timestamps[0]);
 
-  assert.equal(result.run.updatedAt, timestamps[5]);
+  assert.equal(result.run.updatedAt, timestamps[8]);
 });
 
 test("fails the run when workspace preparation fails", async () => {
@@ -208,6 +247,7 @@ test("fails the run when workspace preparation fails", async () => {
     workspaceProvisioner,
     agentExecutor: blockedAgentExecutor,
     validator,
+    gitPublisher,
     now: createClock(timestamps),
   });
 
@@ -269,6 +309,7 @@ test("fails the run when validation fails", async () => {
     workspaceProvisioner,
     agentExecutor,
     validator,
+    gitPublisher,
     now: createClock(timestamps),
   });
 
@@ -342,6 +383,7 @@ test("normalizes non-Error execution failures", async () => {
     workspaceProvisioner,
     agentExecutor,
     validator,
+    gitPublisher,
     now: createClock(timestamps),
   });
 
@@ -389,6 +431,7 @@ test("fails the run when agent execution fails without validating", async () => 
     workspaceProvisioner,
     agentExecutor: failingAgentExecutor,
     validator,
+    gitPublisher,
     now: createClock(timestamps),
   });
 
@@ -433,4 +476,124 @@ test("fails the run when agent execution fails without validating", async () => 
       },
     ],
   );
+});
+
+function gitFailureDependencies(gitPublisher) {
+  return {
+    workspaceProvisioner: {
+      async create() {
+        return workspace;
+      },
+    },
+    agentExecutor,
+    validator: { async validate() {} },
+    gitPublisher,
+    now: (() => {
+      let tick = 0;
+      return () => new Date(Date.UTC(2026, 7, 8, 10, tick++));
+    })(),
+  };
+}
+
+function transitionPairs(result) {
+  return result.run.transitions.map(({ from, to }) => [from, to]);
+}
+
+test("Git inspection failure gates commit and push while retaining workspace metadata", async () => {
+  let commitCalled = false;
+  let pushCalled = false;
+  const result = await executeRun(
+    request,
+    gitFailureDependencies({
+      async inspect() {
+        throw new GitBoundaryError(
+          gitBoundaryErrorCodes.GIT_FORBIDDEN_PATH,
+          "Rejected path",
+          { stderr: "provider-neutral diagnostic" },
+        );
+      },
+      async commit() {
+        commitCalled = true;
+      },
+      async push() {
+        pushCalled = true;
+      },
+    }),
+  );
+  assert.equal(result.run.state, runStates.FAILED);
+  assert.equal(commitCalled, false);
+  assert.equal(pushCalled, false);
+  assert.deepEqual(result.workspace, workspace);
+  assert.deepEqual(result.gitFailure, {
+    code: gitBoundaryErrorCodes.GIT_FORBIDDEN_PATH,
+    message: "Rejected path",
+    stderr: "provider-neutral diagnostic",
+  });
+  assert.deepEqual(transitionPairs(result).slice(-2), [
+    [runStates.VALIDATING, runStates.INSPECTING_CHANGES],
+    [runStates.INSPECTING_CHANGES, runStates.FAILED],
+  ]);
+});
+
+test("Git commit failure gates push while retaining workspace metadata", async () => {
+  let pushCalled = false;
+  const result = await executeRun(
+    request,
+    gitFailureDependencies({
+      async inspect() {
+        return gitPublisher.inspect();
+      },
+      async commit() {
+        throw new GitBoundaryError(
+          gitBoundaryErrorCodes.GIT_COMMIT_FAILED,
+          "Commit failed",
+        );
+      },
+      async push() {
+        pushCalled = true;
+      },
+    }),
+  );
+  assert.equal(result.run.state, runStates.FAILED);
+  assert.equal(pushCalled, false);
+  assert.deepEqual(result.workspace, workspace);
+  assert.equal(
+    result.gitFailure?.code,
+    gitBoundaryErrorCodes.GIT_COMMIT_FAILED,
+  );
+  assert.deepEqual(transitionPairs(result).slice(-2), [
+    [runStates.INSPECTING_CHANGES, runStates.COMMITTING],
+    [runStates.COMMITTING, runStates.FAILED],
+  ]);
+});
+
+test("Git push failure never completes and retains workspace metadata", async () => {
+  const result = await executeRun(
+    request,
+    gitFailureDependencies({
+      async inspect() {
+        return gitPublisher.inspect();
+      },
+      async commit({ inspection }) {
+        return gitPublisher.commit({ inspection });
+      },
+      async push() {
+        throw new GitBoundaryError(
+          gitBoundaryErrorCodes.GIT_PUSH_FAILED,
+          "Non-fast-forward push rejected",
+        );
+      },
+    }),
+  );
+  assert.equal(result.run.state, runStates.FAILED);
+  assert.deepEqual(result.workspace, workspace);
+  assert.equal(result.gitFailure?.code, gitBoundaryErrorCodes.GIT_PUSH_FAILED);
+  assert.equal(
+    result.run.transitions.some(({ to }) => to === runStates.COMPLETED),
+    false,
+  );
+  assert.deepEqual(transitionPairs(result).slice(-2), [
+    [runStates.COMMITTING, runStates.PUSHING],
+    [runStates.PUSHING, runStates.FAILED],
+  ]);
 });

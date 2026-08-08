@@ -146,6 +146,24 @@ function createProvisioner() {
   };
 }
 
+const gitPublisher = {
+  async inspect() {
+    return {
+      changes: [{ path: "AGENT_EXECUTED.txt", kind: "UNTRACKED" }],
+      approvedPaths: ["AGENT_EXECUTED.txt"],
+    };
+  },
+  async commit({ inspection }) {
+    return {
+      commitSha: "b".repeat(40),
+      committedPaths: inspection.approvedPaths,
+    };
+  },
+  async push({ workspace, commit, remote }) {
+    return { ...commit, pushedBranch: workspace.featureBranch, remote };
+  },
+};
+
 async function withCodexEnvironment(fixture, action) {
   const original = {
     HOME: process.env.HOME,
@@ -214,11 +232,13 @@ process.stdout.write(
       executePnpmRun(
         {
           runId: "all-315-real-codex-success",
+          issueTitle: "Real Codex success",
           instruction,
           workspace: createWorkspaceRequest(fixture.workspacePath),
         },
         {
           workspaceProvisioner: createProvisioner(),
+          gitPublisher,
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -281,6 +301,7 @@ process.exit(9);
         },
         {
           workspaceProvisioner: createProvisioner(),
+          gitPublisher,
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -338,6 +359,7 @@ await writeFile(
         },
         {
           workspaceProvisioner: createProvisioner(),
+          gitPublisher,
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
