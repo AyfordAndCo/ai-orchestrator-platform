@@ -76,3 +76,27 @@
 - [x] Add execution lifecycle and failure tests.
 - [x] Resolve independent review findings.
 - [x] Pass full repository validation.
+
+## ALL-315 — Concrete Codex CLI Agent Provider
+
+- [x] Implement `CodexCliAgentExecutor` in the integrations layer.
+- [x] Preserve the provider-independent `AgentExecutor` domain boundary.
+- [x] Run Codex with fixed adapter-owned arguments and `shell: false`.
+- [x] Deliver agent instructions through stdin rather than shell arguments.
+- [x] Run Codex with `workspace-write`, ephemeral execution, and no approval prompts.
+- [x] Require an absolute trusted Codex executable path.
+- [x] Restrict execution to a validated workspace below the configured workspace root.
+- [x] Reject missing, non-directory, symbolic-link, and out-of-root workspaces.
+- [x] Pass only the explicit Codex environment allowlist.
+- [x] Bound stdout and stderr captured from the provider.
+- [x] Enforce execution timeout with SIGTERM/SIGKILL process-group termination.
+- [x] Expose stable provider launch, execution, timeout, and workspace error codes.
+- [x] Compose the concrete Codex executor inside `executePnpmRun`.
+- [x] Prevent repository validation when Codex execution fails.
+- [x] Preserve real `pnpm validate` execution after successful agent execution.
+- [x] Add fake-process coverage without requiring live credentials in CI.
+- [x] Add agent-execution tests to the repository test command.
+- [x] Complete security-focused independent review and resolve findings.
+- [x] Enforce runtime read isolation from unrelated host secrets and privileged resources.
+- [x] Complete real-host smoke through the compiled adapter in a disposable repository.
+- [x] `pnpm validate` passes with 55 tests.
