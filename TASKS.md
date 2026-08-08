@@ -60,3 +60,19 @@
 - [x] Add real worker validation success and failure coverage
 - [x] Independent review completed and findings resolved
 - [x] `pnpm validate` passes with 41 tests
+
+## ALL-314 — Agent Execution Boundary
+
+- [x] Add `EXECUTING` orchestration state.
+- [x] Enforce `READY -> EXECUTING -> VALIDATING`.
+- [x] Define provider-independent `AgentExecutor` contracts.
+- [x] Pass structured run, issue, workspace, and instruction context.
+- [x] Protect the provisioned workspace from executor mutation.
+- [x] Add stable `AGENT_EXECUTION_FAILED` handling.
+- [x] Prevent validation when agent execution fails.
+- [x] Preserve workspace for execution-failure diagnostics.
+- [x] Preserve repository validation behavior after successful execution.
+- [x] Wire `AgentExecutor` into `executePnpmRun`.
+- [x] Add execution lifecycle and failure tests.
+- [x] Resolve independent review findings.
+- [x] Pass full repository validation.

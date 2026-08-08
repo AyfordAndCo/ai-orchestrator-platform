@@ -46,6 +46,16 @@ function createWorkspaceRequest(workspacePath) {
   };
 }
 
+function createAgentExecutor() {
+  return {
+    async execute() {
+      return {
+        summary: "Implementation completed",
+      };
+    },
+  };
+}
+
 function createProvisioner() {
   return {
     async create(request) {
@@ -63,10 +73,13 @@ process.stdout.write("worker-validation-ok");
     const result = await executePnpmRun(
       {
         runId: "all-313-real-validation-success",
+        instruction: "Implement test change.",
         workspace: createWorkspaceRequest(workspacePath),
       },
       {
         workspaceProvisioner: createProvisioner(),
+
+        agentExecutor: createAgentExecutor(),
       },
     );
 
@@ -91,10 +104,13 @@ process.exit(9);
     const result = await executePnpmRun(
       {
         runId: "all-313-real-validation-failure",
+        instruction: "Implement test change.",
         workspace: createWorkspaceRequest(workspacePath),
       },
       {
         workspaceProvisioner: createProvisioner(),
+
+        agentExecutor: createAgentExecutor(),
       },
     );
 

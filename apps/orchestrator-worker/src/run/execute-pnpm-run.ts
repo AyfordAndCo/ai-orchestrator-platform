@@ -1,3 +1,5 @@
+import type { AgentExecutor } from "../../../../packages/domain/src/agent-execution/index.js";
+
 import type { WorkspaceProvisioner } from "../../../../packages/domain/src/workspace/index.js";
 
 import {
@@ -13,6 +15,7 @@ import {
 
 export interface ExecutePnpmRunDependencies {
   readonly workspaceProvisioner: WorkspaceProvisioner;
+  readonly agentExecutor: AgentExecutor;
   readonly validation?: PnpmWorkspaceValidatorOptions;
   readonly now?: () => Date;
 }
@@ -25,6 +28,7 @@ export async function executePnpmRun(
 
   return await executeRun(request, {
     workspaceProvisioner: dependencies.workspaceProvisioner,
+    agentExecutor: dependencies.agentExecutor,
     validator,
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
   });

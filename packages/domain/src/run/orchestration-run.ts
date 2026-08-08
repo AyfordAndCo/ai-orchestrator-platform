@@ -24,7 +24,8 @@ const allowedTransitions: Readonly<
 > = {
   [runStates.QUEUED]: [runStates.PREPARING_WORKSPACE],
   [runStates.PREPARING_WORKSPACE]: [runStates.READY],
-  [runStates.READY]: [runStates.VALIDATING],
+  [runStates.READY]: [runStates.EXECUTING],
+  [runStates.EXECUTING]: [runStates.VALIDATING],
   [runStates.VALIDATING]: [runStates.COMPLETED],
 };
 

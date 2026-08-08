@@ -15,9 +15,10 @@ const dates = {
   created: new Date("2026-08-08T09:00:00.000Z"),
   preparing: new Date("2026-08-08T09:01:00.000Z"),
   ready: new Date("2026-08-08T09:02:00.000Z"),
-  validating: new Date("2026-08-08T09:03:00.000Z"),
-  completed: new Date("2026-08-08T09:04:00.000Z"),
-  failed: new Date("2026-08-08T09:05:00.000Z"),
+  executing: new Date("2026-08-08T09:03:00.000Z"),
+  validating: new Date("2026-08-08T09:04:00.000Z"),
+  completed: new Date("2026-08-08T09:05:00.000Z"),
+  failed: new Date("2026-08-08T09:06:00.000Z"),
 };
 
 function createRun() {
@@ -68,8 +69,10 @@ test("advances through the valid lifecycle and records transition history", () =
 
   const ready = transitionRun(preparing, runStates.READY, dates.ready);
 
+  const executing = transitionRun(ready, runStates.EXECUTING, dates.executing);
+
   const validating = transitionRun(
-    ready,
+    executing,
     runStates.VALIDATING,
     dates.validating,
   );
@@ -97,6 +100,11 @@ test("advances through the valid lifecycle and records transition history", () =
     },
     {
       from: runStates.READY,
+      to: runStates.EXECUTING,
+      occurredAt: dates.executing,
+    },
+    {
+      from: runStates.EXECUTING,
       to: runStates.VALIDATING,
       occurredAt: dates.validating,
     },
@@ -135,6 +143,13 @@ test("rejects skipped and backward transitions", () => {
     () => transitionRun(preparing, runStates.QUEUED, dates.ready),
     (error) => assertRunError(error, runErrorCodes.INVALID_RUN_TRANSITION),
   );
+
+  const ready = transitionRun(preparing, runStates.READY, dates.ready);
+
+  assert.throws(
+    () => transitionRun(ready, runStates.VALIDATING, dates.validating),
+    (error) => assertRunError(error, runErrorCodes.INVALID_RUN_TRANSITION),
+  );
 });
 
 test("requires failRun for transitions to FAILED", () => {
@@ -157,13 +172,15 @@ test("supports failure from every active execution state", () => {
 
   const ready = transitionRun(preparing, runStates.READY, dates.ready);
 
+  const executing = transitionRun(ready, runStates.EXECUTING, dates.executing);
+
   const validating = transitionRun(
-    ready,
+    executing,
     runStates.VALIDATING,
     dates.validating,
   );
 
-  const activeRuns = [queued, preparing, ready, validating];
+  const activeRuns = [queued, preparing, ready, executing, validating];
 
   for (const activeRun of activeRuns) {
     const failed = failRun(
@@ -234,6 +251,8 @@ test("prevents transitions out of COMPLETED", () => {
   run = transitionRun(run, runStates.PREPARING_WORKSPACE, dates.preparing);
 
   run = transitionRun(run, runStates.READY, dates.ready);
+
+  run = transitionRun(run, runStates.EXECUTING, dates.executing);
 
   run = transitionRun(run, runStates.VALIDATING, dates.validating);
 
@@ -339,6 +358,8 @@ test("classifies only completed and failed states as terminal", () => {
   assert.equal(isTerminalRunState(runStates.PREPARING_WORKSPACE), false);
 
   assert.equal(isTerminalRunState(runStates.READY), false);
+
+  assert.equal(isTerminalRunState(runStates.EXECUTING), false);
 
   assert.equal(isTerminalRunState(runStates.VALIDATING), false);
 
