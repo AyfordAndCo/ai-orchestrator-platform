@@ -1,3 +1,8 @@
+import type {
+  AgentExecutionResult,
+  AgentExecutor,
+} from "../../../../packages/domain/src/agent-execution/index.js";
+
 import {
   createOrchestrationRun,
   failRun,
@@ -6,20 +11,21 @@ import {
   type OrchestrationRun,
 } from "../../../../packages/domain/src/run/index.js";
 
-import type {
-  CreateWorkspaceRequest,
-  Workspace,
-  WorkspaceProvisioner,
-} from "../../../../packages/domain/src/workspace/index.js";
-
 import {
   WorkspaceValidationError,
   type ValidationErrorCode,
   type WorkspaceValidator,
 } from "../../../../packages/domain/src/validation/index.js";
 
+import type {
+  CreateWorkspaceRequest,
+  Workspace,
+  WorkspaceProvisioner,
+} from "../../../../packages/domain/src/workspace/index.js";
+
 export const executionFailureCodes = {
   WORKSPACE_PREPARATION_FAILED: "WORKSPACE_PREPARATION_FAILED",
+  AGENT_EXECUTION_FAILED: "AGENT_EXECUTION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
 } as const;
 
@@ -34,20 +40,23 @@ export interface ExecuteRunValidationFailure {
 }
 
 export interface ExecuteRunRequest {
-  runId: string;
-  workspace: CreateWorkspaceRequest;
+  readonly runId: string;
+  readonly instruction: string;
+  readonly workspace: CreateWorkspaceRequest;
 }
 
 export interface ExecuteRunDependencies {
-  workspaceProvisioner: WorkspaceProvisioner;
-  validator: RunValidator;
-  now?: () => Date;
+  readonly workspaceProvisioner: WorkspaceProvisioner;
+  readonly agentExecutor: AgentExecutor;
+  readonly validator: RunValidator;
+  readonly now?: () => Date;
 }
 
 export interface ExecuteRunResult {
-  run: OrchestrationRun;
-  workspace?: Workspace;
-  validationFailure?: ExecuteRunValidationFailure;
+  readonly run: OrchestrationRun;
+  readonly workspace?: Workspace;
+  readonly agentExecution?: AgentExecutionResult;
+  readonly validationFailure?: ExecuteRunValidationFailure;
 }
 
 function getValidationFailure(
@@ -109,6 +118,35 @@ export async function executeRun(
 
   run = transitionRun(run, runStates.READY, now());
 
+  run = transitionRun(run, runStates.EXECUTING, now());
+
+  const agentWorkspace: Readonly<Workspace> = Object.freeze({
+    ...workspace,
+  });
+
+  let agentExecution: AgentExecutionResult;
+
+  try {
+    agentExecution = await dependencies.agentExecutor.execute({
+      runId: request.runId,
+      issueId: request.workspace.issueId,
+      workspace: agentWorkspace,
+      instruction: request.instruction,
+    });
+  } catch (error) {
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.AGENT_EXECUTION_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+    };
+  }
+
   run = transitionRun(run, runStates.VALIDATING, now());
 
   try {
@@ -126,6 +164,7 @@ export async function executeRun(
         now(),
       ),
       workspace,
+      agentExecution,
       ...(validationFailure === undefined ? {} : { validationFailure }),
     };
   }
@@ -135,5 +174,6 @@ export async function executeRun(
   return {
     run,
     workspace,
+    agentExecution,
   };
 }

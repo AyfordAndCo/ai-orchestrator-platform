@@ -10,6 +10,7 @@ import {
 
 const request = {
   runId: "run-001",
+  instruction: "Implement the approved issue specification.",
   workspace: {
     issueId: "ALL-312",
     repositoryPath: "/source",
@@ -21,6 +22,14 @@ const request = {
 
 const workspace = {
   ...request.workspace,
+};
+
+const agentExecutor = {
+  async execute() {
+    return {
+      summary: "Implementation completed",
+    };
+  },
 };
 
 function createClock(values) {
@@ -46,9 +55,11 @@ test("executes the successful initial run lifecycle", async () => {
     new Date("2026-08-08T09:02:00.000Z"),
     new Date("2026-08-08T09:03:00.000Z"),
     new Date("2026-08-08T09:04:00.000Z"),
+    new Date("2026-08-08T09:05:00.000Z"),
   ];
 
   let provisionedRequest;
+  let executionRequest;
   let validatedWorkspace;
 
   const workspaceProvisioner = {
@@ -60,6 +71,22 @@ test("executes the successful initial run lifecycle", async () => {
     },
 
     async remove() {},
+  };
+
+  const successfulAgentExecutor = {
+    async execute(value) {
+      executionRequest = value;
+
+      assert.equal(Object.isFrozen(value.workspace), true);
+
+      assert.throws(() => {
+        value.workspace.workspacePath = "/workspace/attacker-controlled";
+      }, TypeError);
+
+      return {
+        summary: "Implementation completed",
+      };
+    },
   };
 
   const validator = {
@@ -77,19 +104,38 @@ test("executes the successful initial run lifecycle", async () => {
 
   const result = await executeRun(request, {
     workspaceProvisioner,
+    agentExecutor: successfulAgentExecutor,
     validator,
     now: createClock(timestamps),
   });
 
   assert.deepEqual(provisionedRequest, request.workspace);
 
+  assert.deepEqual(executionRequest, {
+    runId: request.runId,
+    issueId: request.workspace.issueId,
+    workspace,
+    instruction: request.instruction,
+  });
+
+  assert.notEqual(executionRequest.workspace, workspace);
+
   assert.deepEqual(validatedWorkspace, workspace);
+
+  assert.equal(
+    validatedWorkspace.workspacePath,
+    request.workspace.workspacePath,
+  );
 
   assert.deepEqual(result.workspace, workspace);
 
   assert.equal(result.run.state, runStates.COMPLETED);
 
   assert.equal(result.run.failure, undefined);
+
+  assert.deepEqual(result.agentExecution, {
+    summary: "Implementation completed",
+  });
 
   assert.deepEqual(
     result.run.transitions.map(({ from, to }) => ({ from, to })),
@@ -104,6 +150,10 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.READY,
+        to: runStates.EXECUTING,
+      },
+      {
+        from: runStates.EXECUTING,
         to: runStates.VALIDATING,
       },
       {
@@ -115,7 +165,7 @@ test("executes the successful initial run lifecycle", async () => {
 
   assert.equal(result.run.createdAt, timestamps[0]);
 
-  assert.equal(result.run.updatedAt, timestamps[4]);
+  assert.equal(result.run.updatedAt, timestamps[5]);
 });
 
 test("fails the run when workspace preparation fails", async () => {
@@ -125,6 +175,7 @@ test("fails the run when workspace preparation fails", async () => {
     new Date("2026-08-08T09:02:00.000Z"),
   ];
 
+  let agentExecutorCalled = false;
   let validatorCalled = false;
 
   const workspaceProvisioner = {
@@ -137,6 +188,16 @@ test("fails the run when workspace preparation fails", async () => {
     async remove() {},
   };
 
+  const blockedAgentExecutor = {
+    async execute() {
+      agentExecutorCalled = true;
+
+      return {
+        summary: "Should not execute",
+      };
+    },
+  };
+
   const validator = {
     async validate() {
       validatorCalled = true;
@@ -145,6 +206,7 @@ test("fails the run when workspace preparation fails", async () => {
 
   const result = await executeRun(request, {
     workspaceProvisioner,
+    agentExecutor: blockedAgentExecutor,
     validator,
     now: createClock(timestamps),
   });
@@ -155,6 +217,8 @@ test("fails the run when workspace preparation fails", async () => {
     code: executionFailureCodes.WORKSPACE_PREPARATION_FAILED,
     message: "Unable to create workspace",
   });
+
+  assert.equal(agentExecutorCalled, false);
 
   assert.equal(validatorCalled, false);
 
@@ -182,6 +246,7 @@ test("fails the run when validation fails", async () => {
     new Date("2026-08-08T09:02:00.000Z"),
     new Date("2026-08-08T09:03:00.000Z"),
     new Date("2026-08-08T09:04:00.000Z"),
+    new Date("2026-08-08T09:05:00.000Z"),
   ];
 
   const workspaceProvisioner = {
@@ -202,6 +267,7 @@ test("fails the run when validation fails", async () => {
 
   const result = await executeRun(request, {
     workspaceProvisioner,
+    agentExecutor,
     validator,
     now: createClock(timestamps),
   });
@@ -230,6 +296,10 @@ test("fails the run when validation fails", async () => {
       },
       {
         from: runStates.READY,
+        to: runStates.EXECUTING,
+      },
+      {
+        from: runStates.EXECUTING,
         to: runStates.VALIDATING,
       },
       {
@@ -270,6 +340,7 @@ test("normalizes non-Error execution failures", async () => {
 
   const result = await executeRun(request, {
     workspaceProvisioner,
+    agentExecutor,
     validator,
     now: createClock(timestamps),
   });
@@ -280,4 +351,86 @@ test("normalizes non-Error execution failures", async () => {
     code: executionFailureCodes.WORKSPACE_PREPARATION_FAILED,
     message: "Unknown execution failure",
   });
+});
+
+test("fails the run when agent execution fails without validating", async () => {
+  const timestamps = [
+    new Date("2026-08-08T09:00:00.000Z"),
+    new Date("2026-08-08T09:01:00.000Z"),
+    new Date("2026-08-08T09:02:00.000Z"),
+    new Date("2026-08-08T09:03:00.000Z"),
+    new Date("2026-08-08T09:04:00.000Z"),
+  ];
+
+  let executionRequest;
+  let validatorCalled = false;
+
+  const workspaceProvisioner = {
+    async create() {
+      return workspace;
+    },
+  };
+
+  const failingAgentExecutor = {
+    async execute(value) {
+      executionRequest = value;
+
+      throw new Error("Agent implementation failed");
+    },
+  };
+
+  const validator = {
+    async validate() {
+      validatorCalled = true;
+    },
+  };
+
+  const result = await executeRun(request, {
+    workspaceProvisioner,
+    agentExecutor: failingAgentExecutor,
+    validator,
+    now: createClock(timestamps),
+  });
+
+  assert.deepEqual(executionRequest, {
+    runId: request.runId,
+    issueId: request.workspace.issueId,
+    workspace,
+    instruction: request.instruction,
+  });
+
+  assert.equal(validatorCalled, false);
+
+  assert.equal(result.run.state, runStates.FAILED);
+
+  assert.deepEqual(result.run.failure, {
+    code: executionFailureCodes.AGENT_EXECUTION_FAILED,
+    message: "Agent implementation failed",
+  });
+
+  assert.deepEqual(result.workspace, workspace);
+
+  assert.equal(result.agentExecution, undefined);
+
+  assert.deepEqual(
+    result.run.transitions.map(({ from, to }) => ({ from, to })),
+    [
+      {
+        from: runStates.QUEUED,
+        to: runStates.PREPARING_WORKSPACE,
+      },
+      {
+        from: runStates.PREPARING_WORKSPACE,
+        to: runStates.READY,
+      },
+      {
+        from: runStates.READY,
+        to: runStates.EXECUTING,
+      },
+      {
+        from: runStates.EXECUTING,
+        to: runStates.FAILED,
+      },
+    ],
+  );
 });
