@@ -29,8 +29,10 @@ security, reliability, test gaps, and violations of the repository lifecycle dec
 The worker intentionally preserves provisioned workspaces after failures for diagnostics;
 do not report missing automatic cleanup as a defect unless it destroys candidate integrity.
 The repository manifest below is authoritative: do not claim a file is missing if it is
-listed there. Do not claim syntax errors or invalid action versions without concrete
-evidence in the supplied diff. The deterministic CI check has already passed.
+listed there. The diff is intentionally bounded, so never infer that a file is truncated
+or incomplete from the excerpt ending. The repository's deterministic format, lint,
+typecheck, test, and build checks have already passed; do not report syntax or type
+errors without concrete contradictory evidence in the supplied diff.
 Return exactly one first line of either VERDICT: APPROVE or VERDICT: REQUEST_CHANGES,
 then at most five concise findings with file and line references. APPROVE is allowed
 only when no actionable issue remains. Do not include chain-of-thought or a review plan.
