@@ -28,11 +28,11 @@ security, reliability, test gaps, and violations of the repository lifecycle dec
 The worker intentionally preserves provisioned workspaces after failures for diagnostics;
 do not report missing automatic cleanup as a defect unless it destroys candidate integrity.
 Return exactly one first line of either VERDICT: APPROVE or VERDICT: REQUEST_CHANGES,
-then concise findings with file and line references. APPROVE is allowed only when no
-actionable issue remains.
+then at most five concise findings with file and line references. APPROVE is allowed
+only when no actionable issue remains. Do not include chain-of-thought or a review plan.
 
 Candidate diff:
-${diff.slice(0, 1_800_000)}`;
+${diff.slice(0, 120_000)}`;
 
 const model = {
   provider: providerName,
