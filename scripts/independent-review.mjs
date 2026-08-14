@@ -41,7 +41,7 @@ Tracked file manifest:
 ${trackedFiles}
 
 Candidate diff:
-${diff.slice(0, 120_000)}`;
+${diff.slice(0, 20_000)}`;
 
 const model = {
   provider: providerName,
