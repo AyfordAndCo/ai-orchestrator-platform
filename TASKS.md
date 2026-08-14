@@ -118,7 +118,7 @@ The implementation order and decisions for this work are recorded in
 
 ### Phase 2 — Safe execution and validation handoff
 
-- [ ] Run validation in a restricted execution environment separate from the host.
+- [x] Run validation in a restricted execution environment separate from the host.
 - [ ] Bind validation to an immutable candidate tree or commit SHA.
 - [ ] Prevent post-validation workspace mutation from changing the candidate.
 - [ ] Preserve bounded diagnostics without exposing secrets.

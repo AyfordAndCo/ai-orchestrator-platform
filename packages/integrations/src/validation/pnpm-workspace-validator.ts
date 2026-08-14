@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 
 import {
   WorkspaceValidationError,
@@ -18,6 +19,15 @@ export interface PnpmWorkspaceValidatorOptions {
   readonly timeoutMs?: number;
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
+  readonly sandbox?: ValidationSandboxOptions;
+}
+
+export interface ValidationSandboxOptions {
+  readonly executablePath: string;
+  readonly nodeExecutablePath: string;
+  readonly corepackDirectoryPath: string;
+  readonly corepackCacheDirectoryPath: string;
+  readonly pnpmStoreDirectoryPath: string;
 }
 
 function requirePositiveInteger(name: string, value: number): number {
@@ -42,13 +52,94 @@ function appendOutput(
   return Buffer.concat([current, chunk.subarray(0, remaining)]);
 }
 
-function createValidationProcess(workspacePath: string) {
-  return spawn("pnpm", ["validate"], {
-    cwd: workspacePath,
-    shell: false,
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+function createValidationProcess(
+  workspacePath: string,
+  sandbox: ValidationSandboxOptions | undefined,
+) {
+  if (sandbox === undefined) {
+    return spawn("pnpm", ["validate"], {
+      cwd: workspacePath,
+      shell: false,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+
+  return spawn(
+    sandbox.executablePath,
+    [
+      "--die-with-parent",
+      "--unshare-net",
+      "--ro-bind",
+      "/usr",
+      "/usr",
+      "--ro-bind",
+      "/bin",
+      "/bin",
+      "--ro-bind",
+      "/lib",
+      "/lib",
+      "--ro-bind",
+      "/lib64",
+      "/lib64",
+      "--ro-bind",
+      "/etc",
+      "/etc",
+      "--proc",
+      "/proc",
+      "--dev",
+      "/dev",
+      "--tmpfs",
+      "/tmp",
+      "--dir",
+      "/home",
+      "--dir",
+      "/home/allan",
+      "--dir",
+      "/home/allan/.local",
+      "--dir",
+      "/home/allan/.local/share",
+      "--ro-bind",
+      sandbox.pnpmStoreDirectoryPath,
+      "/home/allan/.local/share/pnpm",
+      "--bind",
+      workspacePath,
+      "/workspace",
+      "--ro-bind",
+      sandbox.nodeExecutablePath,
+      "/tmp/validator-node",
+      "--ro-bind",
+      sandbox.corepackDirectoryPath,
+      "/tmp/corepack",
+      "--ro-bind",
+      sandbox.corepackCacheDirectoryPath,
+      "/tmp/corepack-cache",
+      "--chdir",
+      "/workspace",
+      "--setenv",
+      "HOME",
+      "/tmp",
+      "--setenv",
+      "PATH",
+      "/tmp:/usr/bin:/bin",
+      "--setenv",
+      "COREPACK_HOME",
+      "/tmp/corepack-cache",
+      "--setenv",
+      "CI",
+      "true",
+      "--",
+      "/tmp/validator-node",
+      "/tmp/corepack/dist/pnpm.js",
+      "validate",
+    ],
+    {
+      cwd: workspacePath,
+      shell: false,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 }
 
 type ValidationProcess = ReturnType<typeof createValidationProcess>;
@@ -112,6 +203,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
   readonly #timeoutMs: number;
   readonly #killGraceMs: number;
   readonly #maxOutputBytes: number;
+  readonly #sandbox: ValidationSandboxOptions | undefined;
 
   constructor(options: PnpmWorkspaceValidatorOptions = {}) {
     this.#timeoutMs = requirePositiveInteger(
@@ -128,6 +220,15 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       "maxOutputBytes",
       options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     );
+
+    if (options.sandbox !== undefined) {
+      for (const [name, value] of Object.entries(options.sandbox)) {
+        if (typeof value !== "string" || !isAbsolute(value)) {
+          throw new RangeError(`${name} must be an absolute path`);
+        }
+      }
+      this.#sandbox = { ...options.sandbox };
+    }
   }
 
   async validate(workspace: Workspace): Promise<WorkspaceValidationResult> {
@@ -145,7 +246,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       let child: ValidationProcess;
 
       try {
-        child = createValidationProcess(workspacePath);
+        child = createValidationProcess(workspacePath, this.#sandbox);
       } catch (error) {
         reject(
           new WorkspaceValidationError(
