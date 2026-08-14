@@ -97,7 +97,6 @@ function createValidationProcess(
         "--env",
         "CI=true",
         container.image,
-        "pnpm",
         "validate",
       ],
       {
@@ -294,6 +293,11 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       }
       if (options.container.image.trim().length === 0) {
         throw new RangeError("container image must not be empty");
+      }
+      if (!/@sha256:[0-9a-f]{64}$/i.test(options.container.image)) {
+        throw new RangeError(
+          "container image must be pinned by a sha256 digest",
+        );
       }
       if (
         options.container.pidsLimit !== undefined &&

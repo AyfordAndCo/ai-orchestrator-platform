@@ -28,7 +28,7 @@ await writeFile(process.env.RECORD_PATH, JSON.stringify(process.argv.slice(2)));
     const validator = new PnpmWorkspaceValidator({
       container: {
         executablePath: fakeDocker,
-        image: "docker.io/example/validator@sha256:abc",
+        image: `docker.io/example/validator@sha256:${"a".repeat(64)}`,
         user: "1000:1000",
         memoryLimit: "2g",
         pidsLimit: 128,
@@ -68,8 +68,7 @@ await writeFile(process.env.RECORD_PATH, JSON.stringify(process.argv.slice(2)));
       "/workspace",
       "--env",
       "CI=true",
-      "docker.io/example/validator@sha256:abc",
-      "pnpm",
+      `docker.io/example/validator@sha256:${"a".repeat(64)}`,
       "validate",
     ]);
   } finally {
