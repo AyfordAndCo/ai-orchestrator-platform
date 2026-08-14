@@ -129,8 +129,8 @@ The implementation order and decisions for this work are recorded in
 - [x] Define provider-neutral execution, review, and capability contracts.
 - [ ] Add configurable workflow defaults and per-task model overrides.
 - [ ] Add capability requirements and model eligibility checks.
-- [ ] Add Ollama HTTP adapter for an existing local server.
-- [ ] Add hosted adapters for OpenAI, Gemini, and OpenRouter.
+- [x] Add OpenAI-compatible HTTP adapter for Ollama, OpenAI, and OpenRouter.
+- [ ] Add Gemini adapter and provider-specific request/response mapping.
 - [ ] Keep Codex CLI behind the existing secured adapter boundary.
 - [ ] Restrict credentials to provider adapters and add configuration tests.
 - [ ] Enforce implementation/review provider or model independence.
