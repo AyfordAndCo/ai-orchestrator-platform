@@ -12,6 +12,10 @@ export { CodexCliAgentExecutor } from "./codex-cli-agent-executor.js";
 
 export { OpenAiCompatibleAgentProvider } from "./openai-compatible-agent-provider.js";
 
+export { GeminiAgentProvider } from "./gemini-agent-provider.js";
+
 export type { CodexCliAgentExecutorOptions } from "./codex-cli-agent-executor.js";
 
 export type { OpenAiCompatibleAgentProviderOptions } from "./openai-compatible-agent-provider.js";
+
+export type { GeminiAgentProviderOptions } from "./gemini-agent-provider.js";
