@@ -12,6 +12,9 @@ export interface RunFailure {
 export interface OrchestrationRun {
   readonly runId: string;
   readonly issueId: string;
+  readonly stackId?: string;
+  readonly stackOrder?: number;
+  readonly parentBranch?: string;
   readonly state: RunState;
   readonly transitions: readonly RunTransition[];
   readonly createdAt: Date;
@@ -89,6 +92,10 @@ export function createOrchestrationRun(
   runId: string,
   issueId: string,
   createdAt: Date = new Date(),
+  context: Pick<
+    OrchestrationRun,
+    "stackId" | "stackOrder" | "parentBranch"
+  > = {},
 ): OrchestrationRun {
   requireIdentifier("runId", runId);
   requireIdentifier("issueId", issueId);
@@ -103,6 +110,13 @@ export function createOrchestrationRun(
   return {
     runId,
     issueId,
+    ...(context.stackId === undefined ? {} : { stackId: context.stackId }),
+    ...(context.stackOrder === undefined
+      ? {}
+      : { stackOrder: context.stackOrder }),
+    ...(context.parentBranch === undefined
+      ? {}
+      : { parentBranch: context.parentBranch }),
     state: runStates.QUEUED,
     transitions: [],
     createdAt,

@@ -58,6 +58,18 @@ test("rejects empty run and issue identifiers", () => {
   );
 });
 
+test("preserves stack context on a run", () => {
+  const run = createOrchestrationRun("run-002", "ALL-316", dates.created, {
+    stackId: "stack-001",
+    stackOrder: 2,
+    parentBranch: "allan/feature-a",
+  });
+
+  assert.equal(run.stackId, "stack-001");
+  assert.equal(run.stackOrder, 2);
+  assert.equal(run.parentBranch, "allan/feature-a");
+});
+
 test("advances through the valid lifecycle and records transition history", () => {
   const queued = createRun();
 

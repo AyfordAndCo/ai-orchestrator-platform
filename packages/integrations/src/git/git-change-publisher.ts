@@ -536,7 +536,7 @@ export class GitChangePublisher implements GitPublisher {
     await checkedGit(
       this.#gitExecutablePath,
       root,
-      ["push", REMOTE_NAME, `refs/heads/${branch}:refs/heads/${branch}`],
+      ["push", REMOTE_NAME, `${request.commit.commitSha}:refs/heads/${branch}`],
       "GIT_PUSH_FAILED",
       "Unable to push reviewed feature branch",
     );

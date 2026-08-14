@@ -123,6 +123,17 @@ export async function executeRun(
     request.runId,
     request.workspace.issueId,
     now(),
+    {
+      ...(request.workspace.stackId === undefined
+        ? {}
+        : { stackId: request.workspace.stackId }),
+      ...(request.workspace.stackOrder === undefined
+        ? {}
+        : { stackOrder: request.workspace.stackOrder }),
+      ...(request.workspace.parentBranch === undefined
+        ? {}
+        : { parentBranch: request.workspace.parentBranch }),
+    },
   );
 
   run = transitionRun(run, runStates.PREPARING_WORKSPACE, now());
