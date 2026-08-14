@@ -62,12 +62,16 @@ if (sensitiveFiles.length === 0) {
 const reviews = await github(
   `/repos/${repository}/pulls/${pullRequestNumber}/reviews?per_page=100`,
 );
-const approved = reviews.some(
-  (review) =>
-    review.user?.login === requiredReviewer &&
-    review.state === "APPROVED" &&
-    review.commit_id === headSha,
-);
+const reviewerHistory = reviews
+  .filter((review) => review.user?.login === requiredReviewer)
+  .sort(
+    (left, right) =>
+      new Date(left.submitted_at ?? 0).getTime() -
+      new Date(right.submitted_at ?? 0).getTime(),
+  );
+const latestReview = reviewerHistory.at(-1);
+const approved =
+  latestReview?.state === "APPROVED" && latestReview.commit_id === headSha;
 
 if (!approved) {
   try {
