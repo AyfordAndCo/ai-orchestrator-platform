@@ -159,5 +159,6 @@ The implementation order and decisions for this work are recorded in
 - [ ] Stop the orchestrator at `MERGE_READY`; delegate merging to GitHub protection/queue.
 - [ ] Add observability for stack progress, gate failures, retries, and blocked work.
 - [ ] Document operator procedures for retries, conflicts, and manual approvals.
+- [x] Configure conditional human review policy for sensitive changes.
 - [ ] Add end-to-end lifecycle tests for single and stacked PRs.
 - [ ] Run independent security and workflow review before enabling hosted execution.
