@@ -33,6 +33,9 @@ listed there. The diff is intentionally bounded, so never infer that a file is t
 or incomplete from the excerpt ending. The repository's deterministic format, lint,
 typecheck, test, and build checks have already passed; do not report syntax or type
 errors without concrete contradictory evidence in the supplied diff.
+Do not flag GitHub Action version availability when this workflow and the repository
+validation workflow have successfully started and executed those actions. The protected
+trunk is main; do not require legacy develop triggers for this PR.
 Return exactly one first line of either VERDICT: APPROVE or VERDICT: REQUEST_CHANGES,
 then at most five concise findings with file and line references. APPROVE is allowed
 only when no actionable issue remains. Do not include chain-of-thought or a review plan.
