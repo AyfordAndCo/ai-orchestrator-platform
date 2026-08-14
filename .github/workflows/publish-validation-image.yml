@@ -6,6 +6,7 @@ on:
       repository:
         description: Docker Hub image repository (for example allanayford/orchestrator-validation)
         required: true
+        default: ayfordandco/ai-orchestrator-platform-validation
         type: string
       pnpm_version:
         description: pnpm version baked into the image
