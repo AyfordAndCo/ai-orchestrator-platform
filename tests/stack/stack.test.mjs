@@ -5,10 +5,14 @@ import {
   StackError,
   addStackBranch,
   createStack,
+  createPhaseCheckpoint,
   durablePhaseStates,
+  failPhase,
   gateKinds,
   requiredGateKinds,
+  startPhase,
   stackStates,
+  succeedPhase,
 } from "../../dist/packages/domain/src/index.js";
 
 test("creates an explicit main-based stack and ordered branches", () => {
@@ -112,4 +116,41 @@ test("defines the mandatory gates and resumable phase states", () => {
   ]);
   assert.equal(durablePhaseStates.SUCCEEDED, "SUCCEEDED");
   assert.equal(durablePhaseStates.BLOCKED, "BLOCKED");
+});
+
+test("resumes only the interrupted phase with a stable idempotency key", () => {
+  const initial = createPhaseCheckpoint(
+    "VALIDATING",
+    "run-1:VALIDATING",
+    new Date("2026-08-14T10:00:00.000Z"),
+  );
+  const running = startPhase(initial, new Date("2026-08-14T10:01:00.000Z"));
+  const failed = failPhase(
+    running,
+    "VALIDATION_TIMEOUT",
+    true,
+    new Date("2026-08-14T10:02:00.000Z"),
+  );
+  const resumed = startPhase(failed, new Date("2026-08-14T10:03:00.000Z"));
+  const completed = succeedPhase(
+    resumed,
+    "candidate:abc123",
+    new Date("2026-08-14T10:04:00.000Z"),
+  );
+
+  assert.equal(resumed.attempt, 2);
+  assert.equal(resumed.idempotencyKey, initial.idempotencyKey);
+  assert.equal(completed.state, durablePhaseStates.SUCCEEDED);
+  assert.equal(completed.outputReference, "candidate:abc123");
+});
+
+test("blocks non-retryable phase failures and prevents accidental restart", () => {
+  const blocked = failPhase(
+    startPhase(createPhaseCheckpoint("REVIEWING", "run-1:REVIEWING")),
+    "POLICY_VIOLATION",
+    false,
+  );
+
+  assert.equal(blocked.state, durablePhaseStates.BLOCKED);
+  assert.throws(() => startPhase(blocked), /Cannot start phase/);
 });

@@ -10,5 +10,12 @@ export type { PullRequest, PullRequestState } from "./pull-request.js";
 export { gateKinds, gateStates, requiredGateKinds } from "./gates.js";
 export type { GateKind, GateResult, GateState } from "./gates.js";
 
-export { durablePhaseStates } from "./phases.js";
+export {
+  PhaseCheckpointError,
+  createPhaseCheckpoint,
+  durablePhaseStates,
+  failPhase,
+  startPhase,
+  succeedPhase,
+} from "./phases.js";
 export type { DurablePhaseState, PhaseCheckpoint } from "./phases.js";

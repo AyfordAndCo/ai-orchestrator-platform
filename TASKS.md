@@ -113,7 +113,7 @@ The implementation order and decisions for this work are recorded in
 - [x] Add `stackId`, `stackOrder`, and `parentBranch` to branch/run context.
 - [x] Define the PR lifecycle and merge-readiness gates.
 - [x] Define durable phase checkpoints and idempotency keys.
-- [ ] Define resumable failure and retry semantics.
+- [x] Define resumable failure and retry semantics.
 - [x] Add domain tests for stack ordering, parent relationships, and gate ordering.
 
 ### Phase 2 — Safe execution and validation handoff
