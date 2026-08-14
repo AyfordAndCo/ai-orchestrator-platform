@@ -30,7 +30,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           REVIEW_PROVIDER: gemini
-          REVIEW_MODEL: gemini-2.5-flash
+          REVIEW_MODEL: gemini-2.0-flash
         run: node scripts/independent-review.mjs
 
   openrouter-review:
@@ -55,7 +55,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_ENDPOINT: https://openrouter.ai/api/v1
           REVIEW_PROVIDER: openrouter
-          REVIEW_MODEL: ${{ vars.OPENROUTER_REVIEW_MODEL || 'deepseek/deepseek-r1:free' }}
+          REVIEW_MODEL: ${{ vars.OPENROUTER_REVIEW_MODEL || 'openrouter/free' }}
         run: node scripts/independent-review.mjs
 
   review-quorum:
