@@ -149,6 +149,7 @@ The implementation order and decisions for this work are recorded in
 - [ ] Block and request human resolution when conflict resolution fails.
 - [x] Push verified commit SHAs rather than mutable branch refs.
 - [ ] Add GitHub integration tests with provider fakes.
+- [x] Add independent Gemini and OpenRouter review quorum workflow.
 
 ### Phase 5 — Recovery, operations, and merge readiness
 

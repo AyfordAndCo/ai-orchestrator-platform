@@ -1,0 +1,70 @@
+name: Independent review quorum
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  gemini-review:
+    name: Gemini review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run independent Gemini review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          REVIEW_PROVIDER: gemini
+          REVIEW_MODEL: gemini-2.5-flash
+        run: node scripts/independent-review.mjs
+
+  openrouter-review:
+    name: OpenRouter review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run independent OpenRouter review
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_ENDPOINT: https://openrouter.ai/api/v1
+          REVIEW_PROVIDER: openrouter
+          REVIEW_MODEL: ${{ vars.OPENROUTER_REVIEW_MODEL || 'deepseek/deepseek-r1:free' }}
+        run: node scripts/independent-review.mjs
+
+  review-quorum:
+    name: Review quorum
+    if: ${{ always() }}
+    needs: [gemini-review, openrouter-review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require both independent approvals
+        if: ${{ needs.gemini-review.result != 'success' || needs.openrouter-review.result != 'success' }}
+        run: exit 1
+      - run: echo "Independent review quorum approved"
