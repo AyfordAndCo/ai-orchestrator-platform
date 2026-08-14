@@ -20,14 +20,16 @@ test("creates PRs and reads checks/reviews through gh without a shell", async ()
       {
         id: "pr-1",
         number: 7,
-        repository: "allan/repo",
-        headBranch: "feature",
-        baseBranch: "main",
-        headCommitSha: "abc",
-        url: "https://github.com/allan/repo/pull/7",
+        html_url: "https://github.com/allan/repo/pull/7",
+        head: { ref: "feature", sha: "abc" },
+        base: { ref: "main" },
       },
-      { check_runs: [{ name: "ci", state: "SUCCESS" }] },
-      [{ id: "review-1", state: "APPROVED", author: "reviewer" }],
+      {
+        check_runs: [
+          { name: "ci", status: "completed", conclusion: "success" },
+        ],
+      },
+      [{ id: 1, state: "APPROVED", user: { login: "reviewer" } }],
     ],
     calls,
   );
