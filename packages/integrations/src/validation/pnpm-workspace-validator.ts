@@ -20,6 +20,7 @@ export interface PnpmWorkspaceValidatorOptions {
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
   readonly sandbox?: ValidationSandboxOptions;
+  readonly container?: ValidationContainerOptions;
 }
 
 export interface ValidationSandboxOptions {
@@ -28,6 +29,14 @@ export interface ValidationSandboxOptions {
   readonly corepackDirectoryPath: string;
   readonly corepackCacheDirectoryPath: string;
   readonly pnpmStoreDirectoryPath: string;
+}
+
+export interface ValidationContainerOptions {
+  readonly executablePath: string;
+  readonly image: string;
+  readonly user?: string;
+  readonly memoryLimit?: string;
+  readonly pidsLimit?: number;
 }
 
 function requirePositiveInteger(name: string, value: number): number {
@@ -55,7 +64,51 @@ function appendOutput(
 function createValidationProcess(
   workspacePath: string,
   sandbox: ValidationSandboxOptions | undefined,
+  container: ValidationContainerOptions | undefined,
 ) {
+  if (container !== undefined) {
+    return spawn(
+      container.executablePath,
+      [
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--user",
+        container.user ?? "1000:1000",
+        ...(container.memoryLimit === undefined
+          ? []
+          : ["--memory", container.memoryLimit]),
+        ...(container.pidsLimit === undefined
+          ? []
+          : ["--pids-limit", String(container.pidsLimit)]),
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,noexec",
+        "--mount",
+        `type=bind,src=${workspacePath},dst=/workspace,rw`,
+        "--workdir",
+        "/workspace",
+        "--env",
+        "CI=true",
+        container.image,
+        "pnpm",
+        "validate",
+      ],
+      {
+        cwd: workspacePath,
+        shell: false,
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  }
+
   if (sandbox === undefined) {
     return spawn("pnpm", ["validate"], {
       cwd: workspacePath,
@@ -204,6 +257,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
   readonly #killGraceMs: number;
   readonly #maxOutputBytes: number;
   readonly #sandbox: ValidationSandboxOptions | undefined;
+  readonly #container: ValidationContainerOptions | undefined;
 
   constructor(options: PnpmWorkspaceValidatorOptions = {}) {
     this.#timeoutMs = requirePositiveInteger(
@@ -229,6 +283,27 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       }
       this.#sandbox = { ...options.sandbox };
     }
+
+    if (options.sandbox !== undefined && options.container !== undefined) {
+      throw new RangeError("sandbox and container cannot both be configured");
+    }
+
+    if (options.container !== undefined) {
+      if (!isAbsolute(options.container.executablePath)) {
+        throw new RangeError("container executablePath must be absolute");
+      }
+      if (options.container.image.trim().length === 0) {
+        throw new RangeError("container image must not be empty");
+      }
+      if (
+        options.container.pidsLimit !== undefined &&
+        (!Number.isInteger(options.container.pidsLimit) ||
+          options.container.pidsLimit <= 0)
+      ) {
+        throw new RangeError("container pidsLimit must be positive");
+      }
+      this.#container = { ...options.container };
+    }
   }
 
   async validate(workspace: Workspace): Promise<WorkspaceValidationResult> {
@@ -246,7 +321,11 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       let child: ValidationProcess;
 
       try {
-        child = createValidationProcess(workspacePath, this.#sandbox);
+        child = createValidationProcess(
+          workspacePath,
+          this.#sandbox,
+          this.#container,
+        );
       } catch (error) {
         reject(
           new WorkspaceValidationError(

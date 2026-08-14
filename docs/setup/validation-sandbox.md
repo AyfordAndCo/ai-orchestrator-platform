@@ -28,3 +28,24 @@ const validator = new PnpmWorkspaceValidator({
 
 The runtime and package-manager paths must be provisioned by the worker host
 and mounted read-only. Do not point them at a workspace-controlled path.
+
+## Production Docker Hub configuration
+
+Use a digest-pinned image for production validation:
+
+```ts
+const validator = new PnpmWorkspaceValidator({
+  container: {
+    executablePath: "/usr/bin/docker",
+    image:
+      "docker.io/example/orchestrator-validation@sha256:<immutable-digest>",
+    user: "1000:1000",
+    memoryLimit: "2g",
+    pidsLimit: 256,
+  },
+});
+```
+
+The worker host must authenticate to Docker Hub before starting the worker. The
+container receives only the workspace mount and `CI=true`; provider keys and
+the Docker socket are never mounted into it.

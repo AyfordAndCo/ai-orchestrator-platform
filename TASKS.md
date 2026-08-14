@@ -119,6 +119,7 @@ The implementation order and decisions for this work are recorded in
 ### Phase 2 — Safe execution and validation handoff
 
 - [x] Run validation in a restricted execution environment separate from the host.
+- [x] Add Docker Hub digest-pinned container validation for production workers.
 - [ ] Bind validation to an immutable candidate tree or commit SHA.
 - [ ] Prevent post-validation workspace mutation from changing the candidate.
 - [ ] Preserve bounded diagnostics without exposing secrets.
