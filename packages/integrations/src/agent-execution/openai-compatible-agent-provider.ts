@@ -62,11 +62,11 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
       if (
         response.ok ||
         ![429, 500, 502, 503, 504].includes(response.status) ||
-        attempt >= 2
+        attempt >= 4
       )
         break;
       await new Promise((resolve) =>
-        setTimeout(resolve, 1_000 * (attempt + 1)),
+        setTimeout(resolve, 3_000 * (attempt + 1)),
       );
     }
 
