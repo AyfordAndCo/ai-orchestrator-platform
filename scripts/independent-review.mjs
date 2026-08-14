@@ -21,15 +21,22 @@ const diff = execFileSync(
     maxBuffer: 2_000_000,
   },
 );
+const trackedFiles = execFileSync("git", ["ls-files"], { encoding: "utf8" });
 
 const prompt = `You are an independent code reviewer. Review only the candidate diff below.
 Do not assume the implementer's intent and do not modify files. Look for correctness,
 security, reliability, test gaps, and violations of the repository lifecycle decisions.
 The worker intentionally preserves provisioned workspaces after failures for diagnostics;
 do not report missing automatic cleanup as a defect unless it destroys candidate integrity.
+The repository manifest below is authoritative: do not claim a file is missing if it is
+listed there. Do not claim syntax errors or invalid action versions without concrete
+evidence in the supplied diff. The deterministic CI check has already passed.
 Return exactly one first line of either VERDICT: APPROVE or VERDICT: REQUEST_CHANGES,
 then at most five concise findings with file and line references. APPROVE is allowed
 only when no actionable issue remains. Do not include chain-of-thought or a review plan.
+
+Tracked file manifest:
+${trackedFiles}
 
 Candidate diff:
 ${diff.slice(0, 120_000)}`;
