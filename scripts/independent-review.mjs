@@ -92,7 +92,9 @@ for (const candidate of [modelName, ...fallbackModels]) {
     lastError = error;
     const message = error instanceof Error ? error.message : String(error);
     const transient =
-      /HTTP (429|500|502|503|504)|quota|rate.?limit|high demand/i.test(message);
+      /HTTP (404|429|500|502|503|504)|quota|rate.?limit|high demand/i.test(
+        message,
+      );
     if (!transient || candidate === fallbackModels.at(-1)) throw error;
     console.warn(`Review model ${candidate} unavailable; trying fallback.`);
   }
