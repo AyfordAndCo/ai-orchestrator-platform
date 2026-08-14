@@ -32,6 +32,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           REVIEW_PROVIDER: gemini
           REVIEW_MODEL: ${{ vars.GEMINI_REVIEW_MODEL || 'gemini-2.5-flash' }}
+          REVIEW_MODEL_FALLBACKS: ${{ vars.GEMINI_REVIEW_MODEL_FALLBACKS || 'gemini-2.5-flash,gemini-2.5-flash-lite' }}
         run: node scripts/independent-review.mjs
 
   openrouter-review:
@@ -58,6 +59,7 @@ jobs:
           OPENROUTER_ENDPOINT: https://openrouter.ai/api/v1
           REVIEW_PROVIDER: openrouter
           REVIEW_MODEL: ${{ vars.OPENROUTER_REVIEW_MODEL || 'openrouter/free' }}
+          REVIEW_MODEL_FALLBACKS: ${{ vars.OPENROUTER_REVIEW_MODEL_FALLBACKS || 'nvidia/nemotron-3.5-lightning:free,liquid/lfm-2.5-2.6b:free' }}
         run: node scripts/independent-review.mjs
 
   review-quorum:
