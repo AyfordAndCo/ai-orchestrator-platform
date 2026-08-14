@@ -1,6 +1,8 @@
 # Validation image
 
-Build and publish this image to Docker Hub from a trusted CI job. Pin the
+Build and publish this image to Docker Hub from the manual
+`Publish validation image` GitHub Actions workflow (configure
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets). Pin the
 published image by digest in worker configuration; do not use a mutable tag in
 production.
 

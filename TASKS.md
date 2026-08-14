@@ -121,6 +121,7 @@ The implementation order and decisions for this work are recorded in
 - [x] Run validation in a restricted execution environment separate from the host.
 - [x] Add Docker Hub digest-pinned container validation for production workers.
 - [x] Add a minimal non-root Docker validation image definition.
+- [x] Add a manually gated Docker Hub image publishing workflow.
 - [ ] Bind validation to an immutable candidate tree or commit SHA.
 - [ ] Prevent post-validation workspace mutation from changing the candidate.
 - [ ] Preserve bounded diagnostics without exposing secrets.
