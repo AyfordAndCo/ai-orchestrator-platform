@@ -49,14 +49,26 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
     const headers = new Headers({ "content-type": "application/json" });
     if (apiKey?.trim()) headers.set("authorization", `Bearer ${apiKey}`);
 
-    const response = await this.#fetch(`${this.#endpoint}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: request.model.model,
-        messages: [{ role: "user", content: request.instruction }],
-      }),
-    });
+    let response: Response;
+    for (let attempt = 0; ; attempt += 1) {
+      response = await this.#fetch(`${this.#endpoint}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: request.model.model,
+          messages: [{ role: "user", content: request.instruction }],
+        }),
+      });
+      if (
+        response.ok ||
+        ![429, 500, 502, 503, 504].includes(response.status) ||
+        attempt >= 2
+      )
+        break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1_000 * (attempt + 1)),
+      );
+    }
 
     const body = await response.text();
     if (!response.ok) {
@@ -72,12 +84,29 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
       throw new Error(`${this.name} returned invalid JSON`, { cause: error });
     }
 
-    const content = (
+    const message = (
       parsed as {
-        choices?: Array<{ message?: { content?: unknown } }>;
+        choices?: Array<{
+          message?: { content?: unknown; reasoning?: unknown };
+        }>;
       }
-    ).choices?.[0]?.message?.content;
-    if (typeof content !== "string") {
+    ).choices?.[0]?.message;
+    const content =
+      typeof message?.content === "string"
+        ? message.content
+        : Array.isArray(message?.content)
+          ? message.content
+              .map((part) =>
+                typeof part === "object" && part !== null && "text" in part
+                  ? (part as { text?: unknown }).text
+                  : undefined,
+              )
+              .filter((text): text is string => typeof text === "string")
+              .join("")
+          : typeof message?.reasoning === "string"
+            ? message.reasoning
+            : undefined;
+    if (!content) {
       throw new Error(`${this.name} response did not contain message content`);
     }
 

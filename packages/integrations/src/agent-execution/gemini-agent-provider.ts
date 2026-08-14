@@ -49,13 +49,25 @@ export class GeminiAgentProvider implements AgentProvider {
       `${this.#endpoint}/v1beta/models/${encodeURIComponent(request.model.model)}:generateContent`,
     );
     url.searchParams.set("key", key);
-    const response = await this.#fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: request.instruction }] }],
-      }),
-    });
+    let response: Response;
+    for (let attempt = 0; ; attempt += 1) {
+      response = await this.#fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: request.instruction }] }],
+        }),
+      });
+      if (
+        response.ok ||
+        ![429, 500, 502, 503, 504].includes(response.status) ||
+        attempt >= 2
+      )
+        break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1_000 * (attempt + 1)),
+      );
+    }
     const body = await response.text();
     if (!response.ok) {
       throw new Error(
