@@ -6,6 +6,10 @@ import type {
 
 const MAX_OUTPUT_BYTES = 1_000_000;
 
+function bounded(value: string): string {
+  return value.slice(0, MAX_OUTPUT_BYTES);
+}
+
 export interface GeminiAgentProviderOptions {
   readonly name?: string;
   readonly endpoint: string;
@@ -55,7 +59,7 @@ export class GeminiAgentProvider implements AgentProvider {
     const body = await response.text();
     if (!response.ok) {
       throw new Error(
-        `${this.name} request failed with HTTP ${response.status}`,
+        `${this.name} request failed with HTTP ${response.status}: ${bounded(body)}`,
       );
     }
 
@@ -76,6 +80,6 @@ export class GeminiAgentProvider implements AgentProvider {
       .filter((text): text is string => typeof text === "string")
       .join("");
     if (!output) throw new Error(`${this.name} response did not contain text`);
-    return { output: output.slice(0, MAX_OUTPUT_BYTES) };
+    return { output: bounded(output) };
   }
 }
