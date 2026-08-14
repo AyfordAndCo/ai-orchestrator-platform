@@ -43,7 +43,7 @@ jobs:
           push: true
           tags: |
             docker.io/${{ inputs.repository }}:pnpm-${{ inputs.pnpm_version }}
-            docker.io/${{ inputs.repository }}:sha-${{ github.sha }}
+            docker.io/${{ inputs.repository }}:pnpm-${{ inputs.pnpm_version }}-sha-${{ github.sha }}
 
       - name: Report immutable digest
         run: 'echo "Validation image digest: docker.io/${{ inputs.repository }}@${{ steps.image.outputs.digest }}"'

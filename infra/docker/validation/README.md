@@ -23,3 +23,13 @@ docker image inspect \
   docker.io/example/orchestrator-validation:pnpm-11.19.0 \
   --format '{{index .RepoDigests 0}}'
 ```
+
+Use a repository name that identifies the platform and purpose, such as
+`ayfordandco/ai-orchestrator-platform-validation`. The publishing workflow
+creates two traceable tags for each commit:
+
+- `pnpm-<version>` — convenience tag for the current runtime version.
+- `pnpm-<version>-sha-<full-commit-sha>` — immutable build trace.
+
+Production configuration must use the `RepoDigest` returned by the workflow,
+not either tag.
