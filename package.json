@@ -12,7 +12,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm build && node --test tests/foundation.test.mjs tests/agent-execution/*.test.mjs tests/git/*.test.mjs tests/provider/*.test.mjs tests/workspace/*.test.mjs tests/run/*.test.mjs tests/stack/*.test.mjs tests/validation/*.test.mjs",
+    "test": "pnpm build && node --test tests/foundation.test.mjs tests/agent-execution/*.test.mjs tests/git/*.test.mjs tests/github/*.test.mjs tests/provider/*.test.mjs tests/workspace/*.test.mjs tests/run/*.test.mjs tests/stack/*.test.mjs tests/validation/*.test.mjs",
     "build": "tsc -p tsconfig.build.json",
     "validate": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

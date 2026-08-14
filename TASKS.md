@@ -137,7 +137,7 @@ The implementation order and decisions for this work are recorded in
 
 ### Phase 4 — GitHub PR and stacked-branch integration
 
-- [ ] Define GitHub adapter contracts for branches, PRs, checks, reviews, and conflicts.
+- [x] Define GitHub adapter contracts for branches, PRs, checks, reviews, and conflicts.
 - [ ] Create one PR per run and group PRs by `stackId`.
 - [ ] Set each PR base to its recorded `parentBranch`.
 - [ ] Track CI, review, QA, and security gate results durably.
