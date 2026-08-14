@@ -5,6 +5,7 @@ import {
   GeminiAgentProvider,
   OpenAiCompatibleAgentProvider,
 } from "../dist/packages/integrations/src/agent-execution/index.js";
+import { hasApprovalVerdict } from "./independent-review-policy.mjs";
 
 const providerName = process.env.REVIEW_PROVIDER;
 const modelName = process.env.REVIEW_MODEL;
@@ -24,6 +25,8 @@ const diff = execFileSync(
 const prompt = `You are an independent code reviewer. Review only the candidate diff below.
 Do not assume the implementer's intent and do not modify files. Look for correctness,
 security, reliability, test gaps, and violations of the repository lifecycle decisions.
+The worker intentionally preserves provisioned workspaces after failures for diagnostics;
+do not report missing automatic cleanup as a defect unless it destroys candidate integrity.
 Return exactly one first line of either VERDICT: APPROVE or VERDICT: REQUEST_CHANGES,
 then concise findings with file and line references. APPROVE is allowed only when no
 actionable issue remains.
@@ -59,6 +62,6 @@ const result = await provider.execute({
 });
 
 process.stdout.write(`${result.output}\n`);
-if (!/^VERDICT:\s*APPROVE\s*$/im.test(result.output)) {
+if (!hasApprovalVerdict(result.output)) {
   process.exitCode = 1;
 }

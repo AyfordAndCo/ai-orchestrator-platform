@@ -30,7 +30,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           REVIEW_PROVIDER: gemini
-          REVIEW_MODEL: gemini-2.0-flash
+          REVIEW_MODEL: ${{ vars.GEMINI_REVIEW_MODEL || 'gemini-2.5-flash' }}
         run: node scripts/independent-review.mjs
 
   openrouter-review:
