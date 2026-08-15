@@ -6,13 +6,16 @@ import {
   addStackBranch,
   areRequiredGatesPassed,
   createStack,
+  createPullRequest,
   createPhaseCheckpoint,
   durablePhaseStates,
   failPhase,
   gateKinds,
   gateStates,
+  isPullRequestMergeReady,
   createRequiredGateResults,
   recordGateResult,
+  recordPullRequestGate,
   requiredGateKinds,
   startPhase,
   stackStates,
@@ -217,4 +220,35 @@ test("requires every mandatory gate to pass", () => {
   }
 
   assert.equal(areRequiredGatesPassed(gates), true);
+});
+
+test("keeps merge readiness attached to the pull request gate record", () => {
+  let pullRequest = createPullRequest({
+    id: "pr-1",
+    number: 7,
+    repository: "allan/repo",
+    headBranch: "feature",
+    baseBranch: "main",
+    stackId: "stack-1",
+    stackOrder: 1,
+    headCommitSha: "abc123",
+  });
+
+  assert.equal(isPullRequestMergeReady(pullRequest), false);
+  for (const kind of [
+    gateKinds.LOCAL_VALIDATION,
+    gateKinds.GITHUB_CI,
+    gateKinds.INDEPENDENT_REVIEW,
+    gateKinds.HUMAN_REVIEW,
+    gateKinds.QA_APPROVAL,
+    gateKinds.SECURITY_SCAN,
+  ]) {
+    pullRequest = recordPullRequestGate(pullRequest, {
+      kind,
+      state: gateStates.PASSED,
+      attempt: 1,
+    });
+  }
+
+  assert.equal(isPullRequestMergeReady(pullRequest), true);
 });

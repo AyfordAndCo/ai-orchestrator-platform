@@ -10,8 +10,17 @@ export {
 } from "./stack.js";
 export type { Stack, StackBranch, StackState } from "./stack.js";
 
-export { pullRequestStates } from "./pull-request.js";
-export type { PullRequest, PullRequestState } from "./pull-request.js";
+export {
+  createPullRequest,
+  isPullRequestMergeReady,
+  pullRequestStates,
+  recordPullRequestGate,
+} from "./pull-request.js";
+export type {
+  CreatePullRequestRecord,
+  PullRequest,
+  PullRequestState,
+} from "./pull-request.js";
 
 export {
   areRequiredGatesPassed,
