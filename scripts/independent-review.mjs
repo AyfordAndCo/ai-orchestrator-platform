@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
+import { ConfiguredAgentProviderRegistry } from "../dist/packages/domain/src/index.js";
 import {
   GeminiAgentProvider,
   OpenAiCompatibleAgentProvider,
@@ -56,7 +57,7 @@ ${trackedFiles}
 Candidate diff:
 ${diff.slice(0, 20_000)}`;
 
-const provider =
+const configuredProvider =
   providerName === "gemini"
     ? new GeminiAgentProvider({
         endpoint:
@@ -70,6 +71,9 @@ const provider =
           process.env.OPENROUTER_ENDPOINT ?? "https://openrouter.ai/api/v1",
         apiKeyEnvironmentVariable: "OPENROUTER_API_KEY",
       });
+const provider = new ConfiguredAgentProviderRegistry([configuredProvider]).get(
+  providerName,
+);
 
 let result;
 let lastError;
