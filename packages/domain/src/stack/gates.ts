@@ -35,3 +35,42 @@ export const requiredGateKinds = Object.freeze([
   gateKinds.QA_APPROVAL,
   gateKinds.SECURITY_SCAN,
 ] as const);
+
+export function createRequiredGateResults(): readonly GateResult[] {
+  return requiredGateKinds.map((kind) => ({
+    kind,
+    state: gateStates.PENDING,
+    attempt: 0,
+  }));
+}
+
+export function recordGateResult(
+  current: readonly GateResult[],
+  next: GateResult,
+): readonly GateResult[] {
+  if (!Number.isInteger(next.attempt) || next.attempt < 1) {
+    throw new RangeError("Gate attempt must be a positive integer");
+  }
+
+  const previous = current.find((gate) => gate.kind === next.kind);
+  if (previous !== undefined && next.attempt < previous.attempt) {
+    throw new RangeError(
+      `Gate ${next.kind} cannot move backwards from attempt ${previous.attempt} to ${next.attempt}`,
+    );
+  }
+
+  const withoutCurrent = current.filter((gate) => gate.kind !== next.kind);
+  return [...withoutCurrent, { ...next }].sort(
+    (left, right) =>
+      requiredGateKinds.indexOf(left.kind) -
+      requiredGateKinds.indexOf(right.kind),
+  );
+}
+
+export function areRequiredGatesPassed(gates: readonly GateResult[]): boolean {
+  return requiredGateKinds.every((kind) =>
+    gates.some(
+      (gate) => gate.kind === kind && gate.state === gateStates.PASSED,
+    ),
+  );
+}

@@ -4,11 +4,15 @@ import test from "node:test";
 import {
   StackError,
   addStackBranch,
+  areRequiredGatesPassed,
   createStack,
   createPhaseCheckpoint,
   durablePhaseStates,
   failPhase,
   gateKinds,
+  gateStates,
+  createRequiredGateResults,
+  recordGateResult,
   requiredGateKinds,
   startPhase,
   stackStates,
@@ -165,4 +169,52 @@ test("blocks non-retryable phase failures and prevents accidental restart", () =
 
   assert.equal(blocked.state, durablePhaseStates.BLOCKED);
   assert.throws(() => startPhase(blocked), /Cannot start phase/);
+});
+
+test("records gate attempts and evaluates merge readiness", () => {
+  let gates = createRequiredGateResults();
+  gates = recordGateResult(gates, {
+    kind: gateKinds.LOCAL_VALIDATION,
+    state: gateStates.PASSED,
+    attempt: 1,
+    summary: "validated candidate",
+  });
+  gates = recordGateResult(gates, {
+    kind: gateKinds.GITHUB_CI,
+    state: gateStates.PASSED,
+    attempt: 1,
+  });
+
+  assert.equal(areRequiredGatesPassed(gates), false);
+  assert.equal(gates.length, 6);
+  assert.equal(gates[0].state, gateStates.PASSED);
+  assert.throws(
+    () =>
+      recordGateResult(gates, {
+        kind: gateKinds.LOCAL_VALIDATION,
+        state: gateStates.RUNNING,
+        attempt: 0,
+      }),
+    /positive integer/,
+  );
+});
+
+test("requires every mandatory gate to pass", () => {
+  let gates = createRequiredGateResults();
+  for (const kind of [
+    gateKinds.LOCAL_VALIDATION,
+    gateKinds.GITHUB_CI,
+    gateKinds.INDEPENDENT_REVIEW,
+    gateKinds.HUMAN_REVIEW,
+    gateKinds.QA_APPROVAL,
+    gateKinds.SECURITY_SCAN,
+  ]) {
+    gates = recordGateResult(gates, {
+      kind,
+      state: gateStates.PASSED,
+      attempt: 1,
+    });
+  }
+
+  assert.equal(areRequiredGatesPassed(gates), true);
 });
