@@ -36,6 +36,14 @@ function requirePositiveInteger(name: string, value: number): number {
   return value;
 }
 
+function requireMetadataValue(name: string, value: string): string {
+  const normalized = requireText(name, value);
+  if (/[\r\n]/.test(normalized)) {
+    throw new RangeError(`${name} must not contain line breaks`);
+  }
+  return normalized;
+}
+
 function repositoryPath(repository: string): string {
   const value = requireText("repository", repository);
   if (!/^[^/\s]+\/[^/\s]+$/.test(value)) {
@@ -116,8 +124,9 @@ export class GhCliGitHubClient implements GitHubClient {
   ): Promise<GitHubPullRequest> {
     const runId = requireText("runId", request.runId);
     const repository = repositoryPath(request.repository);
-    requireText("stackId", request.stackId);
+    const stackId = requireMetadataValue("stackId", request.stackId);
     requirePositiveInteger("stackOrder", request.stackOrder);
+    const body = `${request.body}\n\n<!-- ai-orchestrator: runId=${requireMetadataValue("runId", runId)}; stackId=${stackId}; stackOrder=${request.stackOrder}; parentBranch=${requireMetadataValue("baseBranch", request.baseBranch)} -->`;
     const value = await this.#api<{
       id: number;
       number: number;
@@ -130,7 +139,7 @@ export class GhCliGitHubClient implements GitHubClient {
       "-f",
       `title=${request.title}`,
       "-f",
-      `body=${request.body}`,
+      `body=${body}`,
       "-f",
       `head=${request.headBranch}`,
       "-f",

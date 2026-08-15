@@ -47,6 +47,10 @@ test("creates PRs and reads checks/reviews through gh without a shell", async ()
   });
 
   assert.equal(pullRequest.number, 7);
+  assert.match(
+    calls[0][calls[0].indexOf("-f", calls[0].indexOf("-f") + 1) + 1],
+    /ai-orchestrator: runId=run-1; stackId=stack-1; stackOrder=1; parentBranch=main/,
+  );
   assert.deepEqual(await client.getChecks("allan/repo", 7), [
     { name: "ci", state: "SUCCESS" },
   ]);
