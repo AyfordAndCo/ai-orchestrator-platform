@@ -97,6 +97,35 @@ test("lists and reads pull requests through the GitHub API", async () => {
   assert.match(calls[1][1], /pulls\/7$/);
 });
 
+test("updates a downstream stack branch only through an explicit PR operation", async () => {
+  const calls = [];
+  const client = createClient(
+    [
+      {
+        id: "pr-2",
+        number: 8,
+        html_url: "https://github.com/allan/repo/pull/8",
+        head: { ref: "feature-2", sha: "updated" },
+        base: { ref: "feature-1" },
+      },
+    ],
+    calls,
+  );
+
+  const result = await client.updateStackBranch({
+    repository: "allan/repo",
+    pullRequestNumber: 8,
+    branch: "feature-2",
+    parentBranch: "feature-1",
+    expectedHeadSha: "before",
+  });
+
+  assert.equal(result.headCommitSha, "updated");
+  assert.equal(calls[0][0], "api");
+  assert.equal(calls[0].includes("--method"), true);
+  assert.match(calls[0][calls[0].length - 1], /expected_head_sha=before/);
+});
+
 test("rejects malformed repositories and requires a fixed gh path", () => {
   assert.throws(
     () => new GhCliGitHubClient({ executablePath: "gh" }),

@@ -57,6 +57,7 @@ export interface GitHubReview {
 
 export interface UpdateStackBranchRequest {
   readonly repository: string;
+  readonly pullRequestNumber: number;
   readonly branch: string;
   readonly parentBranch: string;
   readonly expectedHeadSha: string;

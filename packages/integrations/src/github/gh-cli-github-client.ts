@@ -277,9 +277,41 @@ export class GhCliGitHubClient implements GitHubClient {
     }));
   }
 
-  async updateStackBranch(): Promise<GitHubPullRequest> {
-    throw new Error(
-      "Stack branch updates require the isolated Git rebase workflow",
+  async updateStackBranch(request: {
+    readonly repository: string;
+    readonly pullRequestNumber: number;
+    readonly branch: string;
+    readonly parentBranch: string;
+    readonly expectedHeadSha: string;
+  }): Promise<GitHubPullRequest> {
+    const repository = repositoryPath(request.repository);
+    const branch = branchName(request.branch, "branch");
+    const parentBranch = requireMetadataValue(
+      "parentBranch",
+      request.parentBranch,
     );
+    if (parentBranch === "develop") {
+      throw new RangeError("parentBranch must not be develop");
+    }
+    const value = await this.#api<{
+      id: number;
+      number: number;
+      html_url: string;
+      head: { ref: string; sha: string };
+      base: { ref: string };
+    }>(
+      "update stack branch",
+      `repos/${repository}/pulls/${requirePositiveInteger("pullRequestNumber", request.pullRequestNumber)}/update-branch`,
+      [
+        "--method",
+        "PUT",
+        "-f",
+        `expected_head_sha=${requireMetadataValue("expectedHeadSha", request.expectedHeadSha)}`,
+      ],
+    );
+    if (value.head.ref !== branch || value.base.ref !== parentBranch) {
+      throw new Error("updated pull request identity does not match the stack");
+    }
+    return mapPullRequest(value, repository, `stack-update:${branch}`);
   }
 }
