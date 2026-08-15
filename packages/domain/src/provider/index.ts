@@ -19,3 +19,5 @@ export type {
   WorkflowModelDefaults,
   WorkflowModelRequirements,
 } from "./workflow-models.js";
+export { ConfiguredAgentProviderRegistry } from "./provider-registry.js";
+export type { AgentProviderRegistry } from "./provider-registry.js";

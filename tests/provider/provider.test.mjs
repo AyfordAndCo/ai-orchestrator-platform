@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   assertIndependentModels,
+  ConfiguredAgentProviderRegistry,
   modelCapabilities,
   selectModel,
   selectWorkflowModels,
@@ -262,5 +263,23 @@ test("uses catalog capabilities instead of override claims", () => {
         },
       ),
     /does not satisfy required capabilities/,
+  );
+});
+
+test("resolves only explicitly configured providers", () => {
+  const ollama = { name: "ollama", execute: async () => ({ output: "" }) };
+  const gemini = { name: "gemini", execute: async () => ({ output: "" }) };
+  const registry = new ConfiguredAgentProviderRegistry([ollama, gemini]);
+
+  assert.equal(registry.get("ollama"), ollama);
+  assert.throws(() => registry.get("openai"), /is not configured/);
+});
+
+test("rejects duplicate provider registrations", () => {
+  const provider = { name: "ollama", execute: async () => ({ output: "" }) };
+
+  assert.throws(
+    () => new ConfiguredAgentProviderRegistry([provider, provider]),
+    /configured more than once/,
   );
 });
