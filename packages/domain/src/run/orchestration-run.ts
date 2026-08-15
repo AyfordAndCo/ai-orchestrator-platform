@@ -28,10 +28,10 @@ const allowedTransitions: Readonly<
   [runStates.QUEUED]: [runStates.PREPARING_WORKSPACE],
   [runStates.PREPARING_WORKSPACE]: [runStates.READY],
   [runStates.READY]: [runStates.EXECUTING],
-  [runStates.EXECUTING]: [runStates.VALIDATING],
-  [runStates.VALIDATING]: [runStates.INSPECTING_CHANGES],
+  [runStates.EXECUTING]: [runStates.VALIDATING, runStates.INSPECTING_CHANGES],
+  [runStates.VALIDATING]: [runStates.INSPECTING_CHANGES, runStates.PUSHING],
   [runStates.INSPECTING_CHANGES]: [runStates.COMMITTING],
-  [runStates.COMMITTING]: [runStates.PUSHING],
+  [runStates.COMMITTING]: [runStates.VALIDATING, runStates.PUSHING],
   [runStates.PUSHING]: [runStates.COMPLETED],
 };
 

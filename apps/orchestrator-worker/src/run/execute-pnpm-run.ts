@@ -15,6 +15,7 @@ import {
   PnpmWorkspaceValidator,
   type PnpmWorkspaceValidatorOptions,
 } from "../../../../packages/integrations/src/validation/index.js";
+import type { WorkspaceValidator } from "../../../../packages/domain/src/validation/index.js";
 
 import {
   executeRun,
@@ -26,6 +27,7 @@ export interface ExecutePnpmRunDependencies {
   readonly workspaceProvisioner: WorkspaceProvisioner;
   readonly agentExecution: CodexCliAgentExecutorOptions;
   readonly validation?: PnpmWorkspaceValidatorOptions;
+  readonly validator?: WorkspaceValidator;
   readonly gitPublication?: GitChangePublisherOptions;
   readonly gitPublisher?: GitPublisher;
   readonly now?: () => Date;
@@ -37,7 +39,9 @@ export async function executePnpmRun(
 ): Promise<ExecuteRunResult> {
   const agentExecutor = new CodexCliAgentExecutor(dependencies.agentExecution);
 
-  const validator = new PnpmWorkspaceValidator(dependencies.validation);
+  const validator =
+    dependencies.validator ??
+    new PnpmWorkspaceValidator(dependencies.validation);
   if (
     dependencies.gitPublisher === undefined &&
     dependencies.gitPublication === undefined

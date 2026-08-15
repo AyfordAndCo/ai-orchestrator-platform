@@ -13,7 +13,19 @@ import {
   startPhase,
   stackStates,
   succeedPhase,
+  trunkBranchName,
+  trunkBranchPolicy,
 } from "../../dist/packages/domain/src/index.js";
+
+test("defines main as the protected trunk with no direct publication path", () => {
+  assert.equal(trunkBranchName, "main");
+  assert.deepEqual(trunkBranchPolicy, {
+    name: "main",
+    protected: true,
+    directPushesAllowed: false,
+    directMergesAllowed: false,
+  });
+});
 
 test("creates an explicit main-based stack and ordered branches", () => {
   const createdAt = new Date("2026-08-14T10:00:00.000Z");

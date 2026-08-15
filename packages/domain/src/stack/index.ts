@@ -1,7 +1,13 @@
 export { StackError, stackErrorCodes } from "./stack-errors.js";
 export type { StackErrorCode } from "./stack-errors.js";
 
-export { addStackBranch, createStack, stackStates } from "./stack.js";
+export {
+  addStackBranch,
+  createStack,
+  stackStates,
+  trunkBranchName,
+  trunkBranchPolicy,
+} from "./stack.js";
 export type { Stack, StackBranch, StackState } from "./stack.js";
 
 export { pullRequestStates } from "./pull-request.js";

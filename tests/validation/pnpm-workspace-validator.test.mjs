@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { execFile } from "node:child_process";
 import process from "node:process";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   WorkspaceValidationError,
@@ -12,6 +14,8 @@ import {
 } from "../../dist/packages/domain/src/validation/index.js";
 
 import { PnpmWorkspaceValidator } from "../../dist/packages/integrations/src/validation/index.js";
+
+const execFileAsync = promisify(execFile);
 
 async function createFixture(validationSource) {
   const root = await mkdtemp(join(tmpdir(), "all-313-validation-"));
@@ -44,6 +48,22 @@ function createWorkspace(workspacePath) {
     featureBranch: "allan/all-313-test",
     workspacePath,
   };
+}
+
+async function git(cwd, ...args) {
+  return (
+    await execFileAsync("/usr/bin/git", args, { cwd, encoding: "utf8" })
+  ).stdout.trim();
+}
+
+async function createGitFixture(validationSource) {
+  const root = await createFixture(validationSource);
+  await git(root, "init", "-b", "main");
+  await git(root, "config", "user.name", "Validation Test");
+  await git(root, "config", "user.email", "validation@example.test");
+  await git(root, "add", "--", "package.json", "validate.mjs");
+  await git(root, "commit", "-m", "test: candidate");
+  return root;
 }
 
 function assertValidationError(error, expectedCode) {
@@ -278,5 +298,69 @@ process.stdout.write("should-not-run");
       recursive: true,
       force: true,
     });
+  }
+});
+
+test("binds validation to the candidate commit and rejects candidate mutation", async () => {
+  const workspacePath = await createGitFixture(`
+process.stdout.write("candidate-ok");
+`);
+
+  try {
+    const candidateCommitSha = await git(workspacePath, "rev-parse", "HEAD");
+    const validator = new PnpmWorkspaceValidator();
+    const result = await validator.validate(
+      createWorkspace(workspacePath),
+      candidateCommitSha,
+    );
+    assert.match(result.stdout, /candidate-ok/);
+
+    await writeFile(
+      join(workspacePath, "validate.mjs"),
+      `
+import { execFileSync } from "node:child_process";
+execFileSync("/usr/bin/git", ["commit", "--allow-empty", "-m", "validation-mutation"]);
+process.exitCode = 9;
+`,
+    );
+    await assert.rejects(
+      validator.validate(createWorkspace(workspacePath), candidateCommitSha),
+      (error) =>
+        assertValidationError(
+          error,
+          validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+        ),
+    );
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("does not expose inherited secrets in validation or bounded diagnostics", async () => {
+  const workspacePath = await createFixture(`
+process.stdout.write(
+  JSON.stringify({
+    secret: process.env.TEST_VALIDATION_SECRET ?? "missing",
+    diagnostic: "token=super-secret authorization: Bearer bearer-secret",
+  }),
+);
+`);
+  try {
+    const validator = new PnpmWorkspaceValidator({
+      environment: {
+        PATH: process.env.PATH,
+        TEST_VALIDATION_SECRET: "environment-secret",
+      },
+    });
+    const result = await validator.validate(createWorkspace(workspacePath));
+    assert.match(result.stdout, /"secret":"missing"/);
+    assert.doesNotMatch(
+      result.stdout,
+      /environment-secret|super-secret|bearer-secret/,
+    );
+    assert.match(result.stdout, /token=\[REDACTED\]/);
+    assert.match(result.stdout, /authorization: Bearer \[REDACTED\]/);
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true });
   }
 });

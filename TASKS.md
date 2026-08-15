@@ -108,7 +108,7 @@ The implementation order and decisions for this work are recorded in
 
 ### Phase 1 — Domain and workflow contracts
 
-- [ ] Define `main` as the protected trunk branch.
+- [x] Define `main` as the protected trunk branch.
 - [x] Define `Stack`, `PullRequest`, `StackBranch`, and gate result contracts.
 - [x] Add `stackId`, `stackOrder`, and `parentBranch` to branch/run context.
 - [x] Define the PR lifecycle and merge-readiness gates.
@@ -122,10 +122,10 @@ The implementation order and decisions for this work are recorded in
 - [x] Add Docker Hub digest-pinned container validation for production workers.
 - [x] Add a minimal non-root Docker validation image definition.
 - [x] Add a manually gated Docker Hub image publishing workflow.
-- [ ] Bind validation to an immutable candidate tree or commit SHA.
-- [ ] Prevent post-validation workspace mutation from changing the candidate.
-- [ ] Preserve bounded diagnostics without exposing secrets.
-- [ ] Add regression tests for validation isolation and candidate integrity.
+- [x] Bind validation to an immutable candidate tree or commit SHA.
+- [x] Prevent post-validation workspace mutation from changing the candidate.
+- [x] Preserve bounded diagnostics without exposing secrets.
+- [x] Add regression tests for validation isolation and candidate integrity.
 
 ### Phase 3 — Provider registry and model routing
 
