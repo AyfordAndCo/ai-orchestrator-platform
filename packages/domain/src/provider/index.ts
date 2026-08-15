@@ -11,3 +11,11 @@ export type {
   ProviderExecutionRequest,
   ProviderExecutionResult,
 } from "./provider.js";
+export { selectWorkflowModels } from "./workflow-models.js";
+export type {
+  SelectedWorkflowModels,
+  TaskModelOverrides,
+  WorkflowModelConfig,
+  WorkflowModelDefaults,
+  WorkflowModelRequirements,
+} from "./workflow-models.js";

@@ -130,8 +130,8 @@ The implementation order and decisions for this work are recorded in
 ### Phase 3 — Provider registry and model routing
 
 - [x] Define provider-neutral execution, review, and capability contracts.
-- [ ] Add configurable workflow defaults and per-task model overrides.
-- [ ] Add capability requirements and model eligibility checks.
+- [x] Add configurable workflow defaults and per-task model overrides.
+- [x] Add capability requirements and model eligibility checks.
 - [x] Add OpenAI-compatible HTTP adapter for Ollama, OpenAI, and OpenRouter.
 - [x] Add Gemini adapter and provider-specific request/response mapping.
 - [ ] Keep Codex CLI behind the existing secured adapter boundary.
