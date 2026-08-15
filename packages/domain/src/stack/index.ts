@@ -41,3 +41,14 @@ export {
   succeedPhase,
 } from "./phases.js";
 export type { DurablePhaseState, PhaseCheckpoint } from "./phases.js";
+export { recordStoredPullRequestGate } from "./pull-request-gate-store.js";
+export type { PullRequestGateStore } from "./pull-request-gate-store.js";
+export {
+  stackUpdateStates,
+  updateStackBranchWithConflictHandling,
+} from "./conflict-resolution.js";
+export type {
+  IsolatedConflictResolver,
+  StackUpdateResult,
+  StackUpdateState,
+} from "./conflict-resolution.js";

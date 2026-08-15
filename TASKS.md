@@ -145,12 +145,12 @@ The implementation order and decisions for this work are recorded in
 - [x] Define durable PR gate records and merge-readiness evaluation.
 - [x] Create one PR per run and group PRs by `stackId`.
 - [x] Set each PR base to its recorded `parentBranch`.
-- [ ] Track CI, review, QA, and security gate results durably.
-- [ ] Add explicit downstream stack update/rebase operation.
-- [ ] Attempt automatic conflict resolution in an isolated run.
-- [ ] Block and request human resolution when conflict resolution fails.
+- [x] Track CI, review, QA, and security gate results durably.
+- [x] Add explicit downstream stack update/rebase operation.
+- [x] Attempt automatic conflict resolution in an isolated run.
+- [x] Block and request human resolution when conflict resolution fails.
 - [x] Push verified commit SHAs rather than mutable branch refs.
-- [ ] Add GitHub integration tests with provider fakes.
+- [x] Add GitHub integration tests with provider fakes.
 - [x] Add independent Gemini and OpenRouter review quorum workflow.
 
 ### Phase 5 — Recovery, operations, and merge readiness
