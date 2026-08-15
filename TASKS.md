@@ -141,6 +141,8 @@ The implementation order and decisions for this work are recorded in
 ### Phase 4 — GitHub PR and stacked-branch integration
 
 - [x] Define GitHub adapter contracts for branches, PRs, checks, reviews, and conflicts.
+- [x] Preserve `runId`, `stackId`, `stackOrder`, and parent-branch metadata on PR records.
+- [x] Define durable PR gate records and merge-readiness evaluation.
 - [ ] Create one PR per run and group PRs by `stackId`.
 - [ ] Set each PR base to its recorded `parentBranch`.
 - [ ] Track CI, review, QA, and security gate results durably.
@@ -162,3 +164,10 @@ The implementation order and decisions for this work are recorded in
 - [x] Configure conditional human review policy for sensitive changes.
 - [ ] Add end-to-end lifecycle tests for single and stacked PRs.
 - [ ] Run independent security and workflow review before enabling hosted execution.
+
+### Linear roadmap reconciliation
+
+- `ALL-317` is In Progress and specifies `develop` as the only PR base branch.
+- This repository's approved architecture and trunk policy specify protected `main` as
+  the only trunk and reject `develop`.
+- Resolve that branch-policy conflict before implementing Phase 4 PR publication.
