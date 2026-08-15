@@ -224,6 +224,7 @@ test("requires every mandatory gate to pass", () => {
 
 test("keeps merge readiness attached to the pull request gate record", () => {
   let pullRequest = createPullRequest({
+    runId: "run-1",
     id: "pr-1",
     number: 7,
     repository: "allan/repo",

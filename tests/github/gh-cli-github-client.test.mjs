@@ -35,6 +35,7 @@ test("creates PRs and reads checks/reviews through gh without a shell", async ()
   );
 
   const pullRequest = await client.createPullRequest({
+    runId: "run-1",
     repository: "allan/repo",
     title: "Feature",
     body: "Body",

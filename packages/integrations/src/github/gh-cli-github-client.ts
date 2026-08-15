@@ -29,6 +29,13 @@ function requireText(name: string, value: string): string {
   return value;
 }
 
+function requirePositiveInteger(name: string, value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 function repositoryPath(repository: string): string {
   const value = requireText("repository", repository);
   if (!/^[^/\s]+\/[^/\s]+$/.test(value)) {
@@ -54,8 +61,10 @@ function mapPullRequest(
     base: { ref: string };
   },
   repository: string,
+  runId: string,
 ): GitHubPullRequest {
   return {
+    runId,
     id: String(value.id),
     number: value.number,
     repository,
@@ -105,7 +114,10 @@ export class GhCliGitHubClient implements GitHubClient {
   async createPullRequest(
     request: CreatePullRequestRequest,
   ): Promise<GitHubPullRequest> {
+    const runId = requireText("runId", request.runId);
     const repository = repositoryPath(request.repository);
+    requireText("stackId", request.stackId);
+    requirePositiveInteger("stackOrder", request.stackOrder);
     const value = await this.#api<{
       id: number;
       number: number;
@@ -126,7 +138,7 @@ export class GhCliGitHubClient implements GitHubClient {
       "-F",
       `draft=${String(request.draft)}`,
     ]);
-    return mapPullRequest(value, repository);
+    return mapPullRequest(value, repository, runId);
   }
 
   async getChecks(

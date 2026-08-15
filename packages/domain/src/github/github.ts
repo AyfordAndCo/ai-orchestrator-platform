@@ -19,6 +19,7 @@ export type GitHubReviewState =
   (typeof githubReviewStates)[keyof typeof githubReviewStates];
 
 export interface CreatePullRequestRequest {
+  readonly runId: string;
   readonly repository: string;
   readonly title: string;
   readonly body: string;
@@ -30,6 +31,7 @@ export interface CreatePullRequestRequest {
 }
 
 export interface GitHubPullRequest {
+  readonly runId: string;
   readonly id: string;
   readonly number: number;
   readonly repository: string;

@@ -16,6 +16,7 @@ export type PullRequestState =
   (typeof pullRequestStates)[keyof typeof pullRequestStates];
 
 export interface PullRequest {
+  readonly runId: string;
   readonly id: string;
   readonly number?: number;
   readonly repository: string;
@@ -29,6 +30,7 @@ export interface PullRequest {
 }
 
 export interface CreatePullRequestRecord {
+  readonly runId: string;
   readonly id: string;
   readonly number?: number;
   readonly repository: string;
@@ -48,6 +50,7 @@ function requireText(name: string, value: string): void {
 export function createPullRequest(input: CreatePullRequestRecord): PullRequest {
   for (const [name, value] of Object.entries({
     id: input.id,
+    runId: input.runId,
     repository: input.repository,
     headBranch: input.headBranch,
     baseBranch: input.baseBranch,
