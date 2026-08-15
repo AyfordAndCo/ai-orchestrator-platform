@@ -3,7 +3,7 @@
 const token = process.env.GITHUB_TOKEN;
 const repository = process.env.GITHUB_REPOSITORY;
 const pullRequestNumber = process.env.PR_NUMBER;
-const headSha = process.env.HEAD_SHA;
+let headSha = process.env.HEAD_SHA;
 const requiredReviewer =
   process.env.REQUIRED_HUMAN_REVIEWER || "allanayford-dev";
 
@@ -31,6 +31,17 @@ async function github(path, options = {}) {
     );
   }
   return response.status === 204 ? null : response.json();
+}
+
+if (!headSha) {
+  const pullRequest = await github(
+    `/repos/${repository}/pulls/${pullRequestNumber}`,
+  );
+  headSha = pullRequest.head?.sha;
+}
+
+if (!headSha) {
+  throw new Error("Unable to determine the pull request head commit");
 }
 
 const files = [];
@@ -70,22 +81,47 @@ const reviewerHistory = reviews
       new Date(right.submitted_at ?? 0).getTime(),
   );
 const latestReview = reviewerHistory.at(-1);
-const approved =
+let approved =
   latestReview?.state === "APPROVED" && latestReview.commit_id === headSha;
 
 if (!approved) {
-  try {
-    await github(
-      `/repos/${repository}/pulls/${pullRequestNumber}/requested_reviewers`,
-      {
-        method: "POST",
-        body: JSON.stringify({ reviewers: [requiredReviewer] }),
-        headers: { "Content-Type": "application/json" },
-      },
+  const pullRequest = await github(
+    `/repos/${repository}/pulls/${pullRequestNumber}`,
+  );
+  const authorMayApproveByComment =
+    pullRequest.user?.login === requiredReviewer;
+
+  if (authorMayApproveByComment) {
+    const comments = await github(
+      `/repos/${repository}/issues/${pullRequestNumber}/comments?per_page=100`,
     );
-    console.log(`Requested human review from @${requiredReviewer}.`);
-  } catch (error) {
-    console.warn(`Unable to request @${requiredReviewer}: ${error.message}`);
+    const approvalComment = `Human review approval for commit ${headSha}`;
+    approved = comments.some(
+      (comment) =>
+        comment.user?.login === requiredReviewer &&
+        comment.body?.trim() === approvalComment,
+    );
+  }
+}
+
+if (!approved) {
+  const pullRequest = await github(
+    `/repos/${repository}/pulls/${pullRequestNumber}`,
+  );
+  if (pullRequest.user?.login !== requiredReviewer) {
+    try {
+      await github(
+        `/repos/${repository}/pulls/${pullRequestNumber}/requested_reviewers`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reviewers: [requiredReviewer] }),
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      console.log(`Requested human review from @${requiredReviewer}.`);
+    } catch (error) {
+      console.warn(`Unable to request @${requiredReviewer}: ${error.message}`);
+    }
   }
   console.error(
     `Human approval from @${requiredReviewer} is required for: ${sensitiveFiles.join(", ")}`,
@@ -94,5 +130,5 @@ if (!approved) {
 }
 
 console.log(
-  `Human review policy: @${requiredReviewer} approved the current commit.`,
+  `Human review policy: @${requiredReviewer} approved the current commit${latestReview ? " by review" : " by signed approval comment"}.`,
 );
