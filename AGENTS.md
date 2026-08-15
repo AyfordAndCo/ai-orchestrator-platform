@@ -18,15 +18,16 @@ Use these sources in order:
 4. TASKS.md
 5. Existing repository architecture and tests
 
+Post-task progress reconciliation is defined in `.agents/progress-tracker.md`.
+
 If requirements conflict, stop and report the conflict rather than guessing.
 
 ## Branching
 
-The default development branch is `develop`.
+The protected trunk and default integration branch is `main`.
 
 Never make direct changes to:
 
-- `develop`
 - `main`
 
 Each issue must use:
@@ -90,7 +91,6 @@ Agents may:
 
 Agents may not:
 
-- push directly to `develop`
 - push directly to `main`
 - force push protected branches
 - merge their own pull request

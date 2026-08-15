@@ -2,6 +2,8 @@
 
 Status: approved planning baseline
 
+Review: 2026-08-15
+
 This decision matrix guides implementation of the next orchestrator lifecycle.
 It records the choices made during design review and the constraints that must
 remain true as adapters and infrastructure are added.
@@ -59,3 +61,36 @@ relationship and all mandatory gates are satisfied.
 4. Do not mark a run complete merely because a branch was pushed.
 5. Add tests and security review at each phase boundary; `pnpm validate` remains
    mandatory.
+
+## Linear issue reconciliation
+
+This matrix is the repository-level decision record for the Linear workstream. The
+issue status and coverage below are a documentation cross-check, not a replacement
+for Linear workflow state.
+
+| Issue     | Current Linear state | Covered by this repository                                                    | Outstanding action                                                                                                |
+| --------- | -------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ALL-310` | Needs My Action      | Architecture/package-boundary baseline                                        | Close the external architecture decision record when its remaining decisions are accepted.                        |
+| `ALL-311` | Done                 | Git worktree provisioning                                                     | No implementation gap; retain legacy branch wording only as historical issue context.                             |
+| `ALL-312` | Done                 | Run state machine and worker lifecycle                                        | No implementation gap identified.                                                                                 |
+| `ALL-313` | Done                 | Restricted `pnpm validate` boundary                                           | No implementation gap identified.                                                                                 |
+| `ALL-314` | Done                 | Provider-independent agent execution                                          | No implementation gap identified.                                                                                 |
+| `ALL-315` | Done                 | Secured Codex CLI adapter                                                     | No implementation gap identified.                                                                                 |
+| `ALL-316` | Done                 | Candidate inspection, commit, and SHA-pinned push                             | No implementation gap identified.                                                                                 |
+| `ALL-317` | In Progress          | Intended Phase 4 PR/CI boundary                                               | Implementation is underway under protected `main`; formally edit the stale issue description before closing.      |
+| `ALL-318` | Backlog              | Separate `gemini-apps` repository foundation                                  | Track in that repository; do not add BodyMetrics implementation here.                                             |
+| `ALL-319` | Backlog              | Governance requirements reflected in `AGENTS.md`, `TASKS.md`, and this matrix | Use this matrix as the implementation baseline; complete remaining governance artifacts in the owning repository. |
+
+### Binding branch-policy clarification
+
+`main` is the only protected trunk for this repository. `develop` is not an
+alternative integration branch. Any Linear issue, acceptance criterion, branch
+name, test fixture, or copied workflow text that says otherwise must be treated as
+stale context and reconciled before it drives implementation. The PR base for a
+stack is the recorded `parentBranch`; for the first branch in a stack that parent
+is `main`.
+
+The remote `develop` branch is retained temporarily because it still contains
+history not present on remote `main`. Its deletion is permitted only after the
+current implementation is promoted to `main` and that history is explicitly
+verified as preserved or intentionally superseded.

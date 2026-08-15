@@ -28,6 +28,7 @@ export interface CreatePullRequestRequest {
   readonly draft: boolean;
   readonly stackId: string;
   readonly stackOrder: number;
+  readonly expectedHeadSha: string;
 }
 
 export interface GitHubPullRequest {
@@ -62,6 +63,16 @@ export interface UpdateStackBranchRequest {
 }
 
 export interface GitHubClient {
+  listOpenPullRequests(
+    repository: string,
+    headBranch: string,
+    runId: string,
+  ): Promise<readonly GitHubPullRequest[]>;
+  getPullRequest(
+    repository: string,
+    pullRequestNumber: number,
+    runId: string,
+  ): Promise<GitHubPullRequest>;
   createPullRequest(
     request: CreatePullRequestRequest,
   ): Promise<GitHubPullRequest>;

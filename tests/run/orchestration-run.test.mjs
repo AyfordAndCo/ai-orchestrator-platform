@@ -318,6 +318,30 @@ test("prevents transitions out of COMPLETED", () => {
   );
 });
 
+test("supports the verified PR and CI lifecycle before completion", () => {
+  let run = createRun();
+  run = transitionRun(run, runStates.PREPARING_WORKSPACE, dates.preparing);
+  run = transitionRun(run, runStates.READY, dates.ready);
+  run = transitionRun(run, runStates.EXECUTING, dates.executing);
+  run = transitionRun(run, runStates.INSPECTING_CHANGES, dates.completed);
+  run = transitionRun(run, runStates.COMMITTING, dates.completed);
+  run = transitionRun(run, runStates.PUSHING, dates.completed);
+  run = transitionRun(run, runStates.CREATING_PR, dates.completed);
+  run = transitionRun(run, runStates.WAITING_FOR_CI, dates.completed);
+  run = transitionRun(run, runStates.CI_PASSED, dates.completed);
+  run = transitionRun(run, runStates.COMPLETED, dates.completed);
+
+  assert.deepEqual(
+    run.transitions.slice(-4).map(({ from, to }) => [from, to]),
+    [
+      [runStates.PUSHING, runStates.CREATING_PR],
+      [runStates.CREATING_PR, runStates.WAITING_FOR_CI],
+      [runStates.WAITING_FOR_CI, runStates.CI_PASSED],
+      [runStates.CI_PASSED, runStates.COMPLETED],
+    ],
+  );
+});
+
 test("prevents transitions out of FAILED", () => {
   const failed = failRun(
     createRun(),

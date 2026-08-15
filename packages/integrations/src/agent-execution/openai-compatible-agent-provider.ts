@@ -10,6 +10,7 @@ export interface OpenAiCompatibleAgentProviderOptions {
   readonly name: string;
   readonly endpoint: string;
   readonly apiKeyEnvironmentVariable?: string;
+  readonly retryDelayMs?: number;
   readonly fetchImplementation?: typeof fetch;
 }
 
@@ -27,6 +28,7 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
   readonly name: string;
   readonly #endpoint: string;
   readonly #apiKeyEnvironmentVariable: string | undefined;
+  readonly #retryDelayMs: number;
   readonly #fetch: typeof fetch;
 
   constructor(options: OpenAiCompatibleAgentProviderOptions) {
@@ -36,6 +38,10 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
       "",
     );
     this.#apiKeyEnvironmentVariable = options.apiKeyEnvironmentVariable;
+    this.#retryDelayMs = options.retryDelayMs ?? 3_000;
+    if (!Number.isInteger(this.#retryDelayMs) || this.#retryDelayMs < 0) {
+      throw new RangeError("retryDelayMs must be a non-negative integer");
+    }
     this.#fetch = options.fetchImplementation ?? fetch;
   }
 
@@ -66,7 +72,7 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
       )
         break;
       await new Promise((resolve) =>
-        setTimeout(resolve, 3_000 * (attempt + 1)),
+        setTimeout(resolve, this.#retryDelayMs * (attempt + 1)),
       );
     }
 

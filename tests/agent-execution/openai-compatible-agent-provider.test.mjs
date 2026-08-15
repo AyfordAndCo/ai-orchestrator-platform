@@ -67,6 +67,7 @@ test("maps provider HTTP failures and malformed responses", async () => {
   const failed = new OpenAiCompatibleAgentProvider({
     name: "openai",
     endpoint: "https://api.openai.com/v1",
+    retryDelayMs: 0,
     fetchImplementation: async () =>
       new globalThis.Response("bad gateway", { status: 502 }),
   });
@@ -75,6 +76,7 @@ test("maps provider HTTP failures and malformed responses", async () => {
   const malformed = new OpenAiCompatibleAgentProvider({
     name: "openai",
     endpoint: "https://api.openai.com/v1",
+    retryDelayMs: 0,
     fetchImplementation: async () =>
       new globalThis.Response("{}", { status: 200 }),
   });

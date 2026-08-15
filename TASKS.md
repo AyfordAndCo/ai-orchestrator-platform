@@ -99,7 +99,7 @@
 - [x] Complete security-focused independent review and resolve findings.
 - [x] Enforce runtime read isolation from unrelated host secrets and privileged resources.
 - [x] Complete real-host smoke through the compiled adapter in a disposable repository.
-- [x] `pnpm validate` passes with 55 tests.
+- [x] `pnpm validate` passes with 114 tests when run through the repository's sequential test command.
 
 ## Trunk-Based Stacked PR Lifecycle — Planned
 
@@ -143,8 +143,8 @@ The implementation order and decisions for this work are recorded in
 - [x] Define GitHub adapter contracts for branches, PRs, checks, reviews, and conflicts.
 - [x] Preserve `runId`, `stackId`, `stackOrder`, and parent-branch metadata on PR records.
 - [x] Define durable PR gate records and merge-readiness evaluation.
-- [ ] Create one PR per run and group PRs by `stackId`.
-- [ ] Set each PR base to its recorded `parentBranch`.
+- [x] Create one PR per run and group PRs by `stackId`.
+- [x] Set each PR base to its recorded `parentBranch`.
 - [ ] Track CI, review, QA, and security gate results durably.
 - [ ] Add explicit downstream stack update/rebase operation.
 - [ ] Attempt automatic conflict resolution in an isolated run.
@@ -167,7 +167,37 @@ The implementation order and decisions for this work are recorded in
 
 ### Linear roadmap reconciliation
 
-- `ALL-317` is In Progress and specifies `develop` as the only PR base branch.
-- This repository's approved architecture and trunk policy specify protected `main` as
-  the only trunk and reject `develop`.
-- Resolve that branch-policy conflict before implementing Phase 4 PR publication.
+The following is the current cross-check against Linear (reviewed 2026-08-15):
+
+| Linear issue | Linear status   | Repository coverage                                         | Reconciliation                                                                                                              |
+| ------------ | --------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ALL-310`    | Needs My Action | Architecture and package boundaries                         | Keep open until the external architecture decisions are explicitly closed; no missing implementation task is inferred here. |
+| `ALL-311`    | Done            | Workspace provisioning                                      | Complete; its legacy `develop` wording is historical and must not override this repository's `main` policy.                 |
+| `ALL-312`    | Done            | Execution state machine                                     | Complete; lifecycle contracts and tests are present.                                                                        |
+| `ALL-313`    | Done            | Restricted workspace validation                             | Complete; validation boundary and regression coverage are present.                                                          |
+| `ALL-314`    | Done            | Provider-neutral agent execution                            | Complete; execution boundary and failure behavior are present.                                                              |
+| `ALL-315`    | Done            | Codex CLI provider                                          | Complete; secured adapter, isolation, and smoke coverage are present.                                                       |
+| `ALL-316`    | Done            | Git change inspection and commit/push                       | Complete; immutable candidate publication is present.                                                                       |
+| `ALL-317`    | In Progress     | Phase 4 GitHub PR/CI boundary                               | Implementation underway under the approved `main` policy; Linear's legacy `develop` wording remains superseded by comments. |
+| `ALL-318`    | Backlog         | External `gemini-apps` / BodyMetrics foundation             | Separate repository and delivery stream; tracked here only as a dependency of the governance work.                          |
+| `ALL-319`    | Backlog         | Governance, trunk workflow, stacked PR policy, and CI gates | Source issue for the cross-repository policy; this repository now records the approved `main` decision and remaining gaps.  |
+
+The approved decision matrix is authoritative for this repository: protected `main`
+is the only trunk, every PR base is derived from the recorded parent branch, and
+`develop` is rejected. The conflicting `ALL-317` acceptance criteria have been
+superseded by the approved policy comments; the issue description should be
+formally edited before Phase 4 is closed.
+
+Historical tests that create a temporary `develop` branch remain intentionally
+scoped fixtures; they do not define the production branch policy.
+
+### `develop` retirement audit
+
+GitHub reports `main` as the repository default branch and no open PRs targeting
+`develop`. The remote refs are nevertheless divergent: `develop` contains seven
+commits not present on remote `main`, while the current Phase 1–3 implementation
+is still on the local `allan/phase3-model-routing` branch. Do not delete remote
+`develop` until the current implementation is promoted through a PR to `main`
+and the seven historical commits are confirmed preserved or intentionally
+superseded. This is a release/branch-retirement operation, not a Phase 4 code
+change.

@@ -52,6 +52,14 @@ function repositoryPath(repository: string): string {
   return value;
 }
 
+function branchName(name: string, field: string): string {
+  const value = requireMetadataValue(field, name);
+  if (value === "main" || value === "develop") {
+    throw new RangeError(`${field} cannot be a protected trunk branch`);
+  }
+  return value;
+}
+
 function parseJson<T>(output: string, operation: string): T {
   try {
     return JSON.parse(output) as T;
@@ -97,6 +105,50 @@ export class GhCliGitHubClient implements GitHubClient {
     this.#execFile = options.execFileImplementation ?? execFileAsync;
   }
 
+  async listOpenPullRequests(
+    repository: string,
+    headBranch: string,
+    runId: string,
+  ): Promise<readonly GitHubPullRequest[]> {
+    const normalizedRepository = repositoryPath(repository);
+    const normalizedHead = branchName(headBranch, "headBranch");
+    const owner = normalizedRepository.split("/")[0];
+    const value = await this.#api<
+      Array<{
+        id: number;
+        number: number;
+        html_url: string;
+        head: { ref: string; sha: string };
+        base: { ref: string };
+      }>
+    >(
+      "list open pull requests",
+      `repos/${normalizedRepository}/pulls?state=open&head=${owner}:${normalizedHead}`,
+    );
+    return value.map((pullRequest) =>
+      mapPullRequest(pullRequest, normalizedRepository, runId),
+    );
+  }
+
+  async getPullRequest(
+    repository: string,
+    pullRequestNumber: number,
+    runId: string,
+  ): Promise<GitHubPullRequest> {
+    const normalizedRepository = repositoryPath(repository);
+    const value = await this.#api<{
+      id: number;
+      number: number;
+      html_url: string;
+      head: { ref: string; sha: string };
+      base: { ref: string };
+    }>(
+      "get pull request",
+      `repos/${normalizedRepository}/pulls/${requirePositiveInteger("pullRequestNumber", pullRequestNumber)}`,
+    );
+    return mapPullRequest(value, normalizedRepository, runId);
+  }
+
   async #api<T>(
     operation: string,
     endpoint: string,
@@ -126,6 +178,17 @@ export class GhCliGitHubClient implements GitHubClient {
     const repository = repositoryPath(request.repository);
     const stackId = requireMetadataValue("stackId", request.stackId);
     requirePositiveInteger("stackOrder", request.stackOrder);
+    const headBranch = branchName(request.headBranch, "headBranch");
+    const baseBranch = requireMetadataValue("baseBranch", request.baseBranch);
+    if (baseBranch === "develop") {
+      throw new RangeError(
+        "baseBranch must not be develop; use main or parentBranch",
+      );
+    }
+    const expectedHeadSha = requireMetadataValue(
+      "expectedHeadSha",
+      request.expectedHeadSha,
+    );
     const body = `${request.body}\n\n<!-- ai-orchestrator: runId=${requireMetadataValue("runId", runId)}; stackId=${stackId}; stackOrder=${request.stackOrder}; parentBranch=${requireMetadataValue("baseBranch", request.baseBranch)} -->`;
     const value = await this.#api<{
       id: number;
@@ -141,12 +204,15 @@ export class GhCliGitHubClient implements GitHubClient {
       "-f",
       `body=${body}`,
       "-f",
-      `head=${request.headBranch}`,
+      `head=${headBranch}`,
       "-f",
-      `base=${request.baseBranch}`,
+      `base=${baseBranch}`,
       "-F",
       `draft=${String(request.draft)}`,
     ]);
+    if (value.head.sha !== expectedHeadSha) {
+      throw new Error("create pull request returned an unexpected head SHA");
+    }
     return mapPullRequest(value, repository, runId);
   }
 
