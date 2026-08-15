@@ -8,7 +8,10 @@ import {
   GeminiAgentProvider,
   OpenAiCompatibleAgentProvider,
 } from "../dist/packages/integrations/src/agent-execution/index.js";
-import { hasApprovalVerdict } from "./independent-review-policy.mjs";
+import {
+  assertReviewModelIndependent,
+  hasApprovalVerdict,
+} from "./independent-review-policy.mjs";
 
 const providerName = process.env.REVIEW_PROVIDER;
 const modelName = process.env.REVIEW_MODEL;
@@ -74,11 +77,21 @@ const configuredProvider =
 const provider = new ConfiguredAgentProviderRegistry([configuredProvider]).get(
   providerName,
 );
+const implementationModel = {
+  provider: process.env.IMPLEMENTATION_PROVIDER ?? "codex-cli",
+  model: process.env.IMPLEMENTATION_MODEL ?? "codex-cli",
+  capabilities: ["CODE_EXECUTION"],
+};
 
 let result;
 let lastError;
 for (const candidate of [modelName, ...fallbackModels]) {
   try {
+    assertReviewModelIndependent(implementationModel, {
+      provider: providerName,
+      model: candidate,
+      capabilities: ["CODE_REVIEW", "LONG_CONTEXT"],
+    });
     result = await provider.execute({
       model: {
         provider: providerName,

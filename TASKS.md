@@ -134,9 +134,9 @@ The implementation order and decisions for this work are recorded in
 - [x] Add capability requirements and model eligibility checks.
 - [x] Add OpenAI-compatible HTTP adapter for Ollama, OpenAI, and OpenRouter.
 - [x] Add Gemini adapter and provider-specific request/response mapping.
-- [ ] Keep Codex CLI behind the existing secured adapter boundary.
-- [ ] Restrict credentials to provider adapters and add configuration tests.
-- [ ] Enforce implementation/review provider or model independence.
+- [x] Keep Codex CLI behind the existing secured adapter boundary.
+- [x] Restrict credentials to provider adapters and add configuration tests.
+- [x] Enforce implementation/review provider or model independence.
 
 ### Phase 4 — GitHub PR and stacked-branch integration
 
