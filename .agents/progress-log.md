@@ -41,3 +41,12 @@ evidence and the last local synchronization point.
 - Linear update: Progress comment added to ALL-317
 - Branch/commit: allan/phase3-model-routing @ 067d41d
 - Follow-up/blocker: Complete durable gate persistence, stack update/conflict handling, and resolve pnpm aggregate test environment before declaring Phase 4 complete
+
+## 2026-08-15 — ALL-317 — in_progress
+
+- Scope: Phase 4 gate persistence and stack conflict handling
+- Evidence: Targeted GitHub/stack tests, format, lint, typecheck, and build pass; commit ab53320 pushed
+- Repository updates: File-backed pull-request gate store, explicit stack conflict resolver with human-blocked outcome, GitHub fake integration coverage, and Phase 4 task rows
+- Linear update: Phase 4 implementation progress recorded; promotion PR still blocked by GitHub permissions
+- Branch/commit: allan/phase3-model-routing @ ab53320
+- Follow-up/blocker: Create/merge promotion PR into main, then retire develop; resolve aggregate pnpm validation environment issue
