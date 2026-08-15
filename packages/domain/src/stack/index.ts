@@ -37,10 +37,13 @@ export {
   createPhaseCheckpoint,
   durablePhaseStates,
   failPhase,
+  recoverInterruptedPhase,
+  resumePhase,
   startPhase,
   succeedPhase,
 } from "./phases.js";
 export type { DurablePhaseState, PhaseCheckpoint } from "./phases.js";
+export type { PhaseCheckpointStore } from "./phase-checkpoint-store.js";
 export { recordStoredPullRequestGate } from "./pull-request-gate-store.js";
 export type { PullRequestGateStore } from "./pull-request-gate-store.js";
 export {

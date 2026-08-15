@@ -155,8 +155,8 @@ The implementation order and decisions for this work are recorded in
 
 ### Phase 5 — Recovery, operations, and merge readiness
 
-- [ ] Persist phase checkpoints and make every phase restart idempotent.
-- [ ] Resume interrupted runs from the last durable phase.
+- [x] Persist phase checkpoints and make every phase restart idempotent.
+- [x] Resume interrupted runs from the last durable phase.
 - [ ] Add reconciliation for branch, PR, CI, and stack state drift.
 - [ ] Stop the orchestrator at `MERGE_READY`; delegate merging to GitHub protection/queue.
 - [ ] Add observability for stack progress, gate failures, retries, and blocked work.

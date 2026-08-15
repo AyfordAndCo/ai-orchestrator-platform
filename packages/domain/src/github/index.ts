@@ -22,3 +22,11 @@ export type {
   CiObserverDependencies,
   ObservePullRequestCiRequest,
 } from "./ci-observer.js";
+export {
+  reconcilePullRequest,
+  reconciliationStates,
+} from "./pull-request-reconciliation.js";
+export type {
+  PullRequestReconciliation,
+  ReconciliationState,
+} from "./pull-request-reconciliation.js";

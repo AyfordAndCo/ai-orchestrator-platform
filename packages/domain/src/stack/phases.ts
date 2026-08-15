@@ -111,3 +111,25 @@ export function failPhase(
     failureCode,
   };
 }
+
+/** Converts an interrupted running phase into a retryable checkpoint. */
+export function recoverInterruptedPhase(
+  checkpoint: PhaseCheckpoint,
+  updatedAt = new Date(),
+): PhaseCheckpoint {
+  if (checkpoint.state !== durablePhaseStates.RUNNING) {
+    return checkpoint;
+  }
+  return failPhase(checkpoint, "PHASE_INTERRUPTED", true, updatedAt);
+}
+
+/** Starts only pending or recovered retryable phases; completed work is reused. */
+export function resumePhase(
+  checkpoint: PhaseCheckpoint,
+  updatedAt = new Date(),
+): PhaseCheckpoint {
+  if (checkpoint.state === durablePhaseStates.SUCCEEDED) {
+    return checkpoint;
+  }
+  return startPhase(recoverInterruptedPhase(checkpoint, updatedAt), updatedAt);
+}
