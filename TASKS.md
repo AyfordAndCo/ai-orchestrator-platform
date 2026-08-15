@@ -108,12 +108,12 @@ The implementation order and decisions for this work are recorded in
 
 ### Phase 1 — Domain and workflow contracts
 
-- [ ] Define `main` as the protected trunk branch.
+- [x] Define `main` as the protected trunk branch.
 - [x] Define `Stack`, `PullRequest`, `StackBranch`, and gate result contracts.
 - [x] Add `stackId`, `stackOrder`, and `parentBranch` to branch/run context.
 - [x] Define the PR lifecycle and merge-readiness gates.
 - [x] Define durable phase checkpoints and idempotency keys.
-- [ ] Define resumable failure and retry semantics.
+- [x] Define resumable failure and retry semantics.
 - [x] Add domain tests for stack ordering, parent relationships, and gate ordering.
 
 ### Phase 2 — Safe execution and validation handoff
@@ -122,10 +122,10 @@ The implementation order and decisions for this work are recorded in
 - [x] Add Docker Hub digest-pinned container validation for production workers.
 - [x] Add a minimal non-root Docker validation image definition.
 - [x] Add a manually gated Docker Hub image publishing workflow.
-- [ ] Bind validation to an immutable candidate tree or commit SHA.
-- [ ] Prevent post-validation workspace mutation from changing the candidate.
-- [ ] Preserve bounded diagnostics without exposing secrets.
-- [ ] Add regression tests for validation isolation and candidate integrity.
+- [x] Bind validation to an immutable candidate tree or commit SHA.
+- [x] Prevent post-validation workspace mutation from changing the candidate.
+- [x] Preserve bounded diagnostics without exposing secrets.
+- [x] Add regression tests for validation isolation and candidate integrity.
 
 ### Phase 3 — Provider registry and model routing
 
@@ -159,5 +159,6 @@ The implementation order and decisions for this work are recorded in
 - [ ] Stop the orchestrator at `MERGE_READY`; delegate merging to GitHub protection/queue.
 - [ ] Add observability for stack progress, gate failures, retries, and blocked work.
 - [ ] Document operator procedures for retries, conflicts, and manual approvals.
+- [x] Configure conditional human review policy for sensitive changes.
 - [ ] Add end-to-end lifecycle tests for single and stacked PRs.
 - [ ] Run independent security and workflow review before enabling hosted execution.

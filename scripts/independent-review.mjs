@@ -1,3 +1,5 @@
+/* global console */
+
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
@@ -9,6 +11,14 @@ import { hasApprovalVerdict } from "./independent-review-policy.mjs";
 
 const providerName = process.env.REVIEW_PROVIDER;
 const modelName = process.env.REVIEW_MODEL;
+const fallbackModels = (process.env.REVIEW_MODEL_FALLBACKS ?? "")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean)
+  .filter(
+    (model, index, models) =>
+      model !== modelName && models.indexOf(model) === index,
+  );
 if (!providerName || !modelName) {
   throw new Error("REVIEW_PROVIDER and REVIEW_MODEL are required");
 }
@@ -46,12 +56,6 @@ ${trackedFiles}
 Candidate diff:
 ${diff.slice(0, 20_000)}`;
 
-const model = {
-  provider: providerName,
-  model: modelName,
-  capabilities: ["CODE_REVIEW", "LONG_CONTEXT"],
-};
-
 const provider =
   providerName === "gemini"
     ? new GeminiAgentProvider({
@@ -67,11 +71,36 @@ const provider =
         apiKeyEnvironmentVariable: "OPENROUTER_API_KEY",
       });
 
-const result = await provider.execute({
-  model,
-  instruction: prompt,
-  context: { repository: process.env.GITHUB_REPOSITORY ?? "unknown" },
-});
+let result;
+let lastError;
+for (const candidate of [modelName, ...fallbackModels]) {
+  try {
+    result = await provider.execute({
+      model: {
+        provider: providerName,
+        model: candidate,
+        capabilities: ["CODE_REVIEW", "LONG_CONTEXT"],
+      },
+      instruction: prompt,
+      context: { repository: process.env.GITHUB_REPOSITORY ?? "unknown" },
+    });
+    if (candidate !== modelName) {
+      console.warn(`Review model fallback selected: ${candidate}`);
+    }
+    break;
+  } catch (error) {
+    lastError = error;
+    const message = error instanceof Error ? error.message : String(error);
+    const transient =
+      /HTTP (404|429|500|502|503|504)|quota|rate.?limit|high demand/i.test(
+        message,
+      );
+    if (!transient || candidate === fallbackModels.at(-1)) throw error;
+    console.warn(`Review model ${candidate} unavailable; trying fallback.`);
+  }
+}
+
+if (!result) throw lastError ?? new Error("Review provider returned no result");
 
 process.stdout.write(`${result.output}\n`);
 if (!hasApprovalVerdict(result.output)) {

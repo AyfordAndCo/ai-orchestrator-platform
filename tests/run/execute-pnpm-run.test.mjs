@@ -239,6 +239,7 @@ process.stdout.write(
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -302,6 +303,7 @@ process.exit(9);
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -360,6 +362,7 @@ await writeFile(
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,

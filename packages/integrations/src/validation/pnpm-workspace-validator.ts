@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { promisify } from "node:util";
 
 import {
   WorkspaceValidationError,
@@ -14,11 +15,16 @@ import type { Workspace } from "../../../domain/src/workspace/index.js";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const DEFAULT_GIT_EXECUTABLE_PATH = "/usr/bin/git";
+const execFileAsync = promisify(execFile);
 
 export interface PnpmWorkspaceValidatorOptions {
   readonly timeoutMs?: number;
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
+  readonly gitExecutablePath?: string;
+  readonly verifyCandidateCommit?: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly sandbox?: ValidationSandboxOptions;
   readonly container?: ValidationContainerOptions;
 }
@@ -61,10 +67,74 @@ function appendOutput(
   return Buffer.concat([current, chunk.subarray(0, remaining)]);
 }
 
+function sanitizeOutput(value: string): string {
+  return value
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|token|password|passwd|secret|credential)s?\s*[=:]\s*)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    );
+}
+
+function validationEnvironment(
+  environment: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  const source = environment ?? process.env;
+  const allowed = [
+    "CI",
+    "COREPACK_HOME",
+    "HOME",
+    "LANG",
+    "LOGNAME",
+    "PATH",
+    "PNPM_HOME",
+    "TMPDIR",
+    "USER",
+  ];
+  return Object.fromEntries(
+    allowed.flatMap((name) =>
+      source[name] === undefined ? [] : [[name, source[name] as string]],
+    ),
+  );
+}
+
+function sanitizeAndBound(value: string, maxBytes: number): string {
+  return Buffer.from(sanitizeOutput(value), "utf8")
+    .subarray(0, maxBytes)
+    .toString("utf8");
+}
+
+async function readHead(
+  gitExecutablePath: string,
+  workspacePath: string,
+  environment: NodeJS.ProcessEnv | undefined,
+): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      gitExecutablePath,
+      ["rev-parse", "--verify", "HEAD"],
+      {
+        cwd: workspacePath,
+        encoding: "utf8",
+        env: validationEnvironment(environment),
+      },
+    );
+    return stdout.trim();
+  } catch (error) {
+    throw new WorkspaceValidationError(
+      validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+      "Unable to verify the immutable candidate commit",
+      {},
+      { cause: error },
+    );
+  }
+}
+
 function createValidationProcess(
   workspacePath: string,
   sandbox: ValidationSandboxOptions | undefined,
   container: ValidationContainerOptions | undefined,
+  environment: NodeJS.ProcessEnv | undefined,
 ) {
   if (container !== undefined) {
     return spawn(
@@ -112,6 +182,7 @@ function createValidationProcess(
     return spawn("pnpm", ["validate"], {
       cwd: workspacePath,
       shell: false,
+      env: validationEnvironment(environment),
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -255,6 +326,9 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
   readonly #timeoutMs: number;
   readonly #killGraceMs: number;
   readonly #maxOutputBytes: number;
+  readonly #gitExecutablePath: string;
+  readonly #verifyCandidateCommit: boolean;
+  readonly #environment: NodeJS.ProcessEnv | undefined;
   readonly #sandbox: ValidationSandboxOptions | undefined;
   readonly #container: ValidationContainerOptions | undefined;
 
@@ -273,6 +347,14 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
       "maxOutputBytes",
       options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     );
+
+    this.#gitExecutablePath =
+      options.gitExecutablePath ?? DEFAULT_GIT_EXECUTABLE_PATH;
+    if (!isAbsolute(this.#gitExecutablePath)) {
+      throw new RangeError("gitExecutablePath must be absolute");
+    }
+    this.#verifyCandidateCommit = options.verifyCandidateCommit ?? true;
+    this.#environment = options.environment;
 
     if (options.sandbox !== undefined) {
       for (const [name, value] of Object.entries(options.sandbox)) {
@@ -310,10 +392,74 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
     }
   }
 
-  async validate(workspace: Workspace): Promise<WorkspaceValidationResult> {
+  async validate(
+    workspace: Workspace,
+    candidateCommitSha?: string,
+  ): Promise<WorkspaceValidationResult> {
     await requireWorkspaceDirectory(workspace.workspacePath);
 
-    return await this.runValidation(workspace.workspacePath);
+    if (
+      this.#verifyCandidateCommit &&
+      candidateCommitSha !== undefined &&
+      !/^[0-9a-f]{40}$/i.test(candidateCommitSha)
+    ) {
+      throw new WorkspaceValidationError(
+        validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+        "Candidate commit must be a full Git SHA",
+      );
+    }
+
+    if (this.#verifyCandidateCommit && candidateCommitSha !== undefined) {
+      const head = await readHead(
+        this.#gitExecutablePath,
+        workspace.workspacePath,
+        this.#environment,
+      );
+      if (head !== candidateCommitSha) {
+        throw new WorkspaceValidationError(
+          validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+          "Workspace HEAD does not match the immutable candidate commit",
+        );
+      }
+    }
+
+    let result: WorkspaceValidationResult;
+    try {
+      result = await this.runValidation(workspace.workspacePath);
+    } catch (error) {
+      if (this.#verifyCandidateCommit && candidateCommitSha !== undefined) {
+        const head = await readHead(
+          this.#gitExecutablePath,
+          workspace.workspacePath,
+          this.#environment,
+        );
+        if (head !== candidateCommitSha) {
+          throw new WorkspaceValidationError(
+            validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+            "Validation changed the candidate commit",
+            {},
+            { cause: error },
+          );
+        }
+      }
+      throw error;
+    }
+
+    if (this.#verifyCandidateCommit && candidateCommitSha !== undefined) {
+      const head = await readHead(
+        this.#gitExecutablePath,
+        workspace.workspacePath,
+        this.#environment,
+      );
+      if (head !== candidateCommitSha) {
+        throw new WorkspaceValidationError(
+          validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+          "Validation changed the candidate commit",
+        );
+      }
+    }
+
+    return result;
   }
 
   private runValidation(
@@ -329,6 +475,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
           workspacePath,
           this.#sandbox,
           this.#container,
+          this.#environment,
         );
       } catch (error) {
         reject(
@@ -388,8 +535,8 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
             validationErrorCodes.VALIDATION_LAUNCH_FAILED,
             "Unable to launch repository validation",
             {
-              stdout: stdout.toString("utf8"),
-              stderr: stderr.toString("utf8"),
+              stdout: sanitizeOutput(stdout.toString("utf8")),
+              stderr: sanitizeOutput(stderr.toString("utf8")),
             },
             {
               cause: error,
@@ -412,8 +559,14 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
         }
 
         const output = {
-          stdout: stdout.toString("utf8"),
-          stderr: stderr.toString("utf8"),
+          stdout: sanitizeAndBound(
+            stdout.toString("utf8"),
+            this.#maxOutputBytes,
+          ),
+          stderr: sanitizeAndBound(
+            stderr.toString("utf8"),
+            this.#maxOutputBytes,
+          ),
         };
 
         if (timedOut) {

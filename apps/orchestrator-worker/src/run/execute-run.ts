@@ -7,6 +7,7 @@ import {
   GitBoundaryError,
   type GitBoundaryErrorCode,
   type GitChangeInspectionResult,
+  type GitCommitResult,
   type GitPublishResult,
   type GitPublisher,
 } from "../../../../packages/domain/src/git/index.js";
@@ -75,6 +76,7 @@ export interface ExecuteRunResult {
   readonly agentExecution?: AgentExecutionResult;
   readonly validationFailure?: ExecuteRunValidationFailure;
   readonly gitInspection?: GitChangeInspectionResult;
+  readonly gitCommit?: GitCommitResult;
   readonly gitPublish?: GitPublishResult;
   readonly gitFailure?: ExecuteRunGitFailure;
 }
@@ -188,28 +190,6 @@ export async function executeRun(
     };
   }
 
-  run = transitionRun(run, runStates.VALIDATING, now());
-
-  try {
-    await dependencies.validator.validate(workspace);
-  } catch (error) {
-    const validationFailure = getValidationFailure(error);
-
-    return {
-      run: failRun(
-        run,
-        {
-          code: executionFailureCodes.VALIDATION_FAILED,
-          message: getFailureMessage(error),
-        },
-        now(),
-      ),
-      workspace,
-      agentExecution,
-      ...(validationFailure === undefined ? {} : { validationFailure }),
-    };
-  }
-
   run = transitionRun(run, runStates.INSPECTING_CHANGES, now());
 
   let gitInspection: GitChangeInspectionResult;
@@ -258,6 +238,30 @@ export async function executeRun(
     };
   }
 
+  run = transitionRun(run, runStates.VALIDATING, now());
+
+  try {
+    await dependencies.validator.validate(workspace, commit.commitSha);
+  } catch (error) {
+    const validationFailure = getValidationFailure(error);
+
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.VALIDATION_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+      agentExecution,
+      gitInspection,
+      gitCommit: commit,
+      ...(validationFailure === undefined ? {} : { validationFailure }),
+    };
+  }
+
   run = transitionRun(run, runStates.PUSHING, now());
 
   let gitPublish: GitPublishResult;
@@ -281,6 +285,7 @@ export async function executeRun(
       workspace,
       agentExecution,
       gitInspection,
+      gitCommit: commit,
       ...(gitFailure === undefined ? {} : { gitFailure }),
     };
   }
@@ -292,6 +297,7 @@ export async function executeRun(
     workspace,
     agentExecution,
     gitInspection,
+    gitCommit: commit,
     gitPublish,
   };
 }

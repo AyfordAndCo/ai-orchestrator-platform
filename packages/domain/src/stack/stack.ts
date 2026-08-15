@@ -8,6 +8,15 @@ export const stackStates = {
   MERGED: "MERGED",
 } as const;
 
+export const trunkBranchName = "main" as const;
+
+export const trunkBranchPolicy = {
+  name: trunkBranchName,
+  protected: true,
+  directPushesAllowed: false,
+  directMergesAllowed: false,
+} as const;
+
 export type StackState = (typeof stackStates)[keyof typeof stackStates];
 
 export interface StackBranch {
@@ -20,7 +29,7 @@ export interface StackBranch {
 
 export interface Stack {
   readonly stackId: string;
-  readonly trunkBranch: "main";
+  readonly trunkBranch: typeof trunkBranchName;
   readonly state: StackState;
   readonly branches: readonly StackBranch[];
   readonly createdAt: Date;
@@ -54,7 +63,7 @@ export function createStack(
 
   return {
     stackId,
-    trunkBranch: "main",
+    trunkBranch: trunkBranchName,
     state: stackStates.PLANNED,
     branches: [],
     createdAt,

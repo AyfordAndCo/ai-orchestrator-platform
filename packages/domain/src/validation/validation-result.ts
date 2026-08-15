@@ -8,5 +8,8 @@ export interface WorkspaceValidationResult {
 }
 
 export interface WorkspaceValidator {
-  validate(workspace: Workspace): Promise<WorkspaceValidationResult>;
+  validate(
+    workspace: Workspace,
+    candidateCommitSha?: string,
+  ): Promise<WorkspaceValidationResult>;
 }

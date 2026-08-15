@@ -181,10 +181,6 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.EXECUTING,
-        to: runStates.VALIDATING,
-      },
-      {
-        from: runStates.VALIDATING,
         to: runStates.INSPECTING_CHANGES,
       },
       {
@@ -193,6 +189,10 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.COMMITTING,
+        to: runStates.VALIDATING,
+      },
+      {
+        from: runStates.VALIDATING,
         to: runStates.PUSHING,
       },
       {
@@ -287,6 +287,8 @@ test("fails the run when validation fails", async () => {
     new Date("2026-08-08T09:03:00.000Z"),
     new Date("2026-08-08T09:04:00.000Z"),
     new Date("2026-08-08T09:05:00.000Z"),
+    new Date("2026-08-08T09:06:00.000Z"),
+    new Date("2026-08-08T09:07:00.000Z"),
   ];
 
   const workspaceProvisioner = {
@@ -341,6 +343,14 @@ test("fails the run when validation fails", async () => {
       },
       {
         from: runStates.EXECUTING,
+        to: runStates.INSPECTING_CHANGES,
+      },
+      {
+        from: runStates.INSPECTING_CHANGES,
+        to: runStates.COMMITTING,
+      },
+      {
+        from: runStates.COMMITTING,
         to: runStates.VALIDATING,
       },
       {
@@ -530,7 +540,7 @@ test("Git inspection failure gates commit and push while retaining workspace met
     stderr: "provider-neutral diagnostic",
   });
   assert.deepEqual(transitionPairs(result).slice(-2), [
-    [runStates.VALIDATING, runStates.INSPECTING_CHANGES],
+    [runStates.EXECUTING, runStates.INSPECTING_CHANGES],
     [runStates.INSPECTING_CHANGES, runStates.FAILED],
   ]);
 });
@@ -593,7 +603,7 @@ test("Git push failure never completes and retains workspace metadata", async ()
     false,
   );
   assert.deepEqual(transitionPairs(result).slice(-2), [
-    [runStates.COMMITTING, runStates.PUSHING],
+    [runStates.VALIDATING, runStates.PUSHING],
     [runStates.PUSHING, runStates.FAILED],
   ]);
 });
