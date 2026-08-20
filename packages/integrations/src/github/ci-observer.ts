@@ -56,7 +56,9 @@ function parseJson<T>(output: string, operation: string): T {
   }
 }
 
-function mapState(checks: readonly GitHubCheck[]): CiObservationResult["state"] {
+function mapState(
+  checks: readonly GitHubCheck[],
+): CiObservationResult["state"] {
   if (checks.length === 0) return "pending";
   if (checks.some((check) => check.state === "FAILURE")) return "failure";
   if (checks.some((check) => check.state === "CANCELLED")) return "cancelled";
@@ -115,9 +117,7 @@ export class GhCliCiObserver implements CiObserver {
     return parseJson<T>(result.stdout, operation);
   }
 
-  async observe(
-    request: CiObservationRequest,
-  ): Promise<CiObservationResult> {
+  async observe(request: CiObservationRequest): Promise<CiObservationResult> {
     const repository = repositoryPath(request.repository);
     const startedAt = Date.now();
 
@@ -181,9 +181,7 @@ export class GhCliCiObserver implements CiObserver {
         break;
       }
 
-      await new Promise((resolve) =>
-        setTimeout(resolve, this.#pollIntervalMs),
-      );
+      await new Promise((resolve) => setTimeout(resolve, this.#pollIntervalMs));
     }
 
     return {

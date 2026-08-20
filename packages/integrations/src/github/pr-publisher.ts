@@ -119,24 +119,20 @@ export class GhCliPullRequestPublisher implements PullRequestPublisher {
         head: { ref: string; sha: string; repo?: { full_name?: string } };
         base: { ref: string };
       }>
-    >(
-      "list pull requests",
-      `repos/${repository}/pulls`,
-      [
-        "--method",
-        "GET",
-        "-f",
-        "state=open",
-        "-f",
-        `head=${owner}:${request.headBranch}`,
-        "-f",
-        `base=${request.baseBranch}`,
-      ],
-    );
+    >("list pull requests", `repos/${repository}/pulls`, [
+      "--method",
+      "GET",
+      "-f",
+      "state=open",
+      "-f",
+      `head=${owner}:${request.headBranch}`,
+      "-f",
+      `base=${request.baseBranch}`,
+    ]);
 
     const candidate = existing[0];
 
-      if (candidate !== undefined) {
+    if (candidate !== undefined) {
       if (candidate.base.ref !== baseBranch) {
         throw new Error("existing pull request base branch mismatch");
       }
@@ -163,24 +159,20 @@ export class GhCliPullRequestPublisher implements PullRequestPublisher {
       html_url: string;
       head: { ref: string; sha: string };
       base: { ref: string };
-    }>(
-      "create pull request",
-      `repos/${repository}/pulls`,
-      [
-        "--method",
-        "POST",
-        "-f",
-        `title=${request.issueId}: ${request.issueTitle}`,
-        "-f",
-        `body=${request.body}`,
-        "-f",
-        `head=${request.headBranch}`,
-        "-f",
-        `base=${baseBranch}`,
-        "-F",
-        "draft=false",
-      ],
-    );
+    }>("create pull request", `repos/${repository}/pulls`, [
+      "--method",
+      "POST",
+      "-f",
+      `title=${request.issueId}: ${request.issueTitle}`,
+      "-f",
+      `body=${request.body}`,
+      "-f",
+      `head=${request.headBranch}`,
+      "-f",
+      `base=${baseBranch}`,
+      "-F",
+      "draft=false",
+    ]);
 
     if (created.base.ref !== baseBranch) {
       throw new Error("created pull request base branch mismatch");

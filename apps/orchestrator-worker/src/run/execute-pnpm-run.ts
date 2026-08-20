@@ -86,9 +86,7 @@ export async function executePnpmRun(
     agentExecutor,
     validator,
     gitPublisher,
-    ...(pullRequestPublisher === undefined
-      ? {}
-      : { pullRequestPublisher }),
+    ...(pullRequestPublisher === undefined ? {} : { pullRequestPublisher }),
     ...(ciObserver === undefined ? {} : { ciObserver }),
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
   });

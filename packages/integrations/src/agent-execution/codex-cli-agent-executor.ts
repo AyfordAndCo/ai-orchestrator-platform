@@ -205,8 +205,7 @@ function createCodexProcess(executablePath: string, workspacePath: string) {
   return spawn(command, args, {
     cwd: workspacePath,
     shell:
-      process.platform === "win32" &&
-      /\.(?:cmd|bat)$/i.test(executablePath),
+      process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executablePath),
     detached: process.platform !== "win32",
     env: createCodexEnvironment(),
     stdio: ["pipe", "pipe", "pipe"],

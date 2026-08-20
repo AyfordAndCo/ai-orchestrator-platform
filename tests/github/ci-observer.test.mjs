@@ -44,14 +44,10 @@ test("maps check runs into provider-neutral CI states", async () => {
   assert.equal(result.checks.length, 2);
   assert.equal(calls[0][0], "api");
   assert.ok(
-    calls.some((args) =>
-      args.some((arg) => String(arg).includes("/pulls/7")),
-    ),
+    calls.some((args) => args.some((arg) => String(arg).includes("/pulls/7"))),
   );
   assert.ok(
-    calls.some((args) =>
-      args.some((arg) => String(arg).includes("/checks")),
-    ),
+    calls.some((args) => args.some((arg) => String(arg).includes("/checks"))),
   );
 });
 
@@ -109,9 +105,7 @@ test("times out when checks never resolve", async () => {
         html_url: "https://github.com/allan/repo/pull/7",
       },
       {
-        check_runs: [
-          { name: "build", status: "queued", conclusion: null },
-        ],
+        check_runs: [{ name: "build", status: "queued", conclusion: null }],
       },
       {
         head: { sha: "abc", ref: "feature" },
@@ -119,9 +113,7 @@ test("times out when checks never resolve", async () => {
         html_url: "https://github.com/allan/repo/pull/7",
       },
       {
-        check_runs: [
-          { name: "build", status: "queued", conclusion: null },
-        ],
+        check_runs: [{ name: "build", status: "queued", conclusion: null }],
       },
       {
         head: { sha: "abc", ref: "feature" },
