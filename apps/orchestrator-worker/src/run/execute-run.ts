@@ -301,6 +301,24 @@ export async function executeRun(
   }
 
   if (dependencies.pullRequestPublisher !== undefined) {
+    if (dependencies.ciObserver === undefined) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: "CI observer is required before publishing a pull request",
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
     run = transitionRun(run, runStates.CREATING_PR, now());
 
     let publication;
@@ -361,24 +379,6 @@ export async function executeRun(
     }
 
     run = transitionRun(run, runStates.WAITING_FOR_CI, now());
-
-    if (dependencies.ciObserver === undefined) {
-      return {
-        run: failRun(
-          run,
-          {
-            code: executionFailureCodes.CI_OBSERVATION_FAILED,
-            message: "CI observer is required after publishing a pull request",
-          },
-          now(),
-        ),
-        workspace,
-        agentExecution,
-        gitInspection,
-        gitCommit: commit,
-        gitPublish,
-      };
-    }
 
     let observation;
     try {

@@ -724,13 +724,14 @@ test("publishes a pull request and waits for CI when GitHub boundaries are confi
   );
 });
 
-test("fails closed when a published pull request has no CI observer", async () => {
+test("fails before publishing when a pull request has no CI observer", async () => {
   const timestamps = Array.from(
     { length: 12 },
     (_, index) =>
       new Date(`2026-08-08T10:${String(index).padStart(2, "0")}:00.000Z`),
   );
 
+  let publishCalled = false;
   const result = await executeRun(request, {
     workspaceProvisioner: {
       async create() {
@@ -742,6 +743,7 @@ test("fails closed when a published pull request has no CI observer", async () =
     gitPublisher,
     pullRequestPublisher: {
       async publish() {
+        publishCalled = true;
         return {
           number: 17,
           url: "https://github.com/allan/repo/pull/17",
@@ -757,8 +759,9 @@ test("fails closed when a published pull request has no CI observer", async () =
   });
 
   assert.equal(result.run.state, runStates.FAILED);
+  assert.equal(publishCalled, false);
   assert.deepEqual(result.run.failure, {
     code: executionFailureCodes.CI_OBSERVATION_FAILED,
-    message: "CI observer is required after publishing a pull request",
+    message: "CI observer is required before publishing a pull request",
   });
 });

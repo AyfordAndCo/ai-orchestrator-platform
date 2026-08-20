@@ -34,9 +34,11 @@ jobs:
           if [ "$pr_author" = "$REQUIRED_HUMAN_REVIEWER" ]; then
             echo "Skipping reviewer request because @${REQUIRED_HUMAN_REVIEWER} authored the PR."
           else
-            gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
-              -f "reviewers[]=$REQUIRED_HUMAN_REVIEWER"
+            jq -n --arg reviewer "$REQUIRED_HUMAN_REVIEWER" \
+              '{reviewers: [$reviewer]}' |
+              gh api --method POST \
+                "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
+                --input -
           fi
       - name: Enforce conditional human review
         if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
