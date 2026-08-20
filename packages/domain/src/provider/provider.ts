@@ -21,6 +21,28 @@ export interface ModelSelectionRequest {
   readonly requiredCapabilities: readonly ModelCapability[];
 }
 
+export interface WorkflowModelRoutingConfig {
+  readonly implementationDefault: ModelReference;
+  readonly reviewDefault: ModelReference;
+  readonly implementationRequiredCapabilities: readonly ModelCapability[];
+  readonly reviewRequiredCapabilities: readonly ModelCapability[];
+}
+
+export interface TaskModelOverrides {
+  readonly implementation?: ModelReference;
+  readonly review?: ModelReference;
+}
+
+export interface ModelRoutingRequest {
+  readonly workflow: WorkflowModelRoutingConfig;
+  readonly task?: TaskModelOverrides;
+}
+
+export interface SelectedWorkflowModels {
+  readonly implementation: ModelReference;
+  readonly review: ModelReference;
+}
+
 export interface ProviderExecutionRequest {
   readonly model: ModelReference;
   readonly instruction: string;
@@ -54,6 +76,26 @@ export function selectModel(request: ModelSelectionRequest): ModelReference {
     );
   }
   return selected;
+}
+
+export function selectWorkflowModels(
+  request: ModelRoutingRequest,
+): SelectedWorkflowModels {
+  const implementation = selectModel({
+    workflowDefault: request.workflow.implementationDefault,
+    ...(request.task?.implementation
+      ? { taskOverride: request.task.implementation }
+      : {}),
+    requiredCapabilities: request.workflow.implementationRequiredCapabilities,
+  });
+  const review = selectModel({
+    workflowDefault: request.workflow.reviewDefault,
+    ...(request.task?.review ? { taskOverride: request.task.review } : {}),
+    requiredCapabilities: request.workflow.reviewRequiredCapabilities,
+  });
+
+  assertIndependentModels(implementation, review);
+  return { implementation, review };
 }
 
 export function assertIndependentModels(
