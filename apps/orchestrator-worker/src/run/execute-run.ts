@@ -362,49 +362,65 @@ export async function executeRun(
 
     run = transitionRun(run, runStates.WAITING_FOR_CI, now());
 
-    if (dependencies.ciObserver !== undefined) {
-      let observation;
-      try {
-        observation = await dependencies.ciObserver.observe({
-          repository: publication.repository,
-          pullRequestNumber: publication.number,
-          expectedHeadSha: publication.headCommitSha,
-        });
-      } catch (error) {
-        return {
-          run: failRun(
-            run,
-            {
-              code: executionFailureCodes.CI_OBSERVATION_FAILED,
-              message: getFailureMessage(error),
-            },
-            now(),
-          ),
-          workspace,
-          agentExecution,
-          gitInspection,
-          gitCommit: commit,
-          gitPublish,
-        };
-      }
+    if (dependencies.ciObserver === undefined) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: "CI observer is required after publishing a pull request",
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
 
-      if (observation.state !== "success") {
-        return {
-          run: failRun(
-            run,
-            {
-              code: executionFailureCodes.CI_OBSERVATION_FAILED,
-              message: `CI observation ended in ${observation.state}`,
-            },
-            now(),
-          ),
-          workspace,
-          agentExecution,
-          gitInspection,
-          gitCommit: commit,
-          gitPublish,
-        };
-      }
+    let observation;
+    try {
+      observation = await dependencies.ciObserver.observe({
+        repository: publication.repository,
+        pullRequestNumber: publication.number,
+        expectedHeadSha: publication.headCommitSha,
+      });
+    } catch (error) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: getFailureMessage(error),
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    if (observation.state !== "success") {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: `CI observation ended in ${observation.state}`,
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
     }
 
     run = transitionRun(run, runStates.CI_PASSED, now());

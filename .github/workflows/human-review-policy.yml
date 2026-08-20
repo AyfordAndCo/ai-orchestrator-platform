@@ -23,6 +23,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Request required human reviewer
+        if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -38,6 +39,7 @@ jobs:
               -f "reviewers[]=$REQUIRED_HUMAN_REVIEWER"
           fi
       - name: Enforce conditional human review
+        if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
