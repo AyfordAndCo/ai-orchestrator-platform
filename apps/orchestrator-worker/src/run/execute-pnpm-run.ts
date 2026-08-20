@@ -1,10 +1,21 @@
 import type { WorkspaceProvisioner } from "../../../../packages/domain/src/workspace/index.js";
 import type { GitPublisher } from "../../../../packages/domain/src/git/index.js";
+import type {
+  CiObserver,
+  PullRequestPublisher,
+} from "../../../../packages/domain/src/github/index.js";
 
 import {
   GitChangePublisher,
   type GitChangePublisherOptions,
 } from "../../../../packages/integrations/src/git/index.js";
+
+import {
+  GhCliCiObserver,
+  GhCliPullRequestPublisher,
+  type GhCliCiObserverOptions,
+  type GhCliPullRequestPublisherOptions,
+} from "../../../../packages/integrations/src/github/index.js";
 
 import {
   CodexCliAgentExecutor,
@@ -30,6 +41,10 @@ export interface ExecutePnpmRunDependencies {
   readonly validator?: WorkspaceValidator;
   readonly gitPublication?: GitChangePublisherOptions;
   readonly gitPublisher?: GitPublisher;
+  readonly pullRequestPublisher?: PullRequestPublisher;
+  readonly ciObserver?: CiObserver;
+  readonly pullRequestPublication?: GhCliPullRequestPublisherOptions;
+  readonly ciObservation?: GhCliCiObserverOptions;
   readonly now?: () => Date;
 }
 
@@ -54,11 +69,27 @@ export async function executePnpmRun(
     dependencies.gitPublisher ??
     new GitChangePublisher(dependencies.gitPublication!);
 
+  const pullRequestPublisher =
+    dependencies.pullRequestPublisher ??
+    (dependencies.pullRequestPublication === undefined
+      ? undefined
+      : new GhCliPullRequestPublisher(dependencies.pullRequestPublication));
+
+  const ciObserver =
+    dependencies.ciObserver ??
+    (dependencies.ciObservation === undefined
+      ? undefined
+      : new GhCliCiObserver(dependencies.ciObservation));
+
   return await executeRun(request, {
     workspaceProvisioner: dependencies.workspaceProvisioner,
     agentExecutor,
     validator,
     gitPublisher,
+    ...(pullRequestPublisher === undefined
+      ? {}
+      : { pullRequestPublisher }),
+    ...(ciObserver === undefined ? {} : { ciObserver }),
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
   });
 }

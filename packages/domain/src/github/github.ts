@@ -75,3 +75,46 @@ export interface GitHubClient {
     request: UpdateStackBranchRequest,
   ): Promise<GitHubPullRequest>;
 }
+
+export interface PullRequestPublicationRequest {
+  readonly repository: string;
+  readonly baseBranch: "develop";
+  readonly headBranch: string;
+  readonly headCommitSha: string;
+  readonly issueId: string;
+  readonly issueTitle: string;
+  readonly body: string;
+}
+
+export interface PullRequestPublicationResult {
+  readonly number: number;
+  readonly url: string;
+  readonly repository: string;
+  readonly headBranch: string;
+  readonly baseBranch: "develop";
+  readonly headCommitSha: string;
+  readonly created: boolean;
+}
+
+export interface CiObservationRequest {
+  readonly repository: string;
+  readonly pullRequestNumber: number;
+  readonly expectedHeadSha: string;
+  readonly timeoutMs?: number;
+  readonly pollIntervalMs?: number;
+}
+
+export interface CiObservationResult {
+  readonly state: "pending" | "success" | "failure" | "cancelled";
+  readonly checks: readonly GitHubCheck[];
+}
+
+export interface PullRequestPublisher {
+  publish(
+    request: PullRequestPublicationRequest,
+  ): Promise<PullRequestPublicationResult>;
+}
+
+export interface CiObserver {
+  observe(request: CiObservationRequest): Promise<CiObservationResult>;
+}

@@ -607,3 +607,110 @@ test("Git push failure never completes and retains workspace metadata", async ()
     [runStates.PUSHING, runStates.FAILED],
   ]);
 });
+
+test("publishes a pull request and waits for CI when GitHub boundaries are configured", async () => {
+  const timestamps = [
+    new Date("2026-08-08T09:00:00.000Z"),
+    new Date("2026-08-08T09:01:00.000Z"),
+    new Date("2026-08-08T09:02:00.000Z"),
+    new Date("2026-08-08T09:03:00.000Z"),
+    new Date("2026-08-08T09:04:00.000Z"),
+    new Date("2026-08-08T09:05:00.000Z"),
+    new Date("2026-08-08T09:06:00.000Z"),
+    new Date("2026-08-08T09:07:00.000Z"),
+    new Date("2026-08-08T09:08:00.000Z"),
+    new Date("2026-08-08T09:09:00.000Z"),
+    new Date("2026-08-08T09:10:00.000Z"),
+    new Date("2026-08-08T09:11:00.000Z"),
+  ];
+
+  const pullRequestPublisher = {
+    async publish() {
+      return {
+        number: 17,
+        url: "https://github.com/allan/repo/pull/17",
+        repository: "/source",
+        headBranch: request.workspace.featureBranch,
+        baseBranch: "develop",
+        headCommitSha: "a".repeat(40),
+        created: true,
+      };
+    },
+  };
+
+  const ciObserver = {
+    async observe() {
+      return {
+        state: "success",
+        checks: [],
+      };
+    },
+  };
+
+  const workspaceProvisioner = {
+    async create() {
+      return workspace;
+    },
+  };
+
+  const result = await executeRun(request, {
+    workspaceProvisioner,
+    agentExecutor,
+    validator: { async validate() {} },
+    gitPublisher,
+    pullRequestPublisher,
+    ciObserver,
+    now: createClock(timestamps),
+  });
+
+  assert.equal(result.run.state, runStates.COMPLETED);
+  assert.deepEqual(
+    result.run.transitions.map(({ from, to }) => ({ from, to })),
+    [
+      {
+        from: runStates.QUEUED,
+        to: runStates.PREPARING_WORKSPACE,
+      },
+      {
+        from: runStates.PREPARING_WORKSPACE,
+        to: runStates.READY,
+      },
+      {
+        from: runStates.READY,
+        to: runStates.EXECUTING,
+      },
+      {
+        from: runStates.EXECUTING,
+        to: runStates.INSPECTING_CHANGES,
+      },
+      {
+        from: runStates.INSPECTING_CHANGES,
+        to: runStates.COMMITTING,
+      },
+      {
+        from: runStates.COMMITTING,
+        to: runStates.VALIDATING,
+      },
+      {
+        from: runStates.VALIDATING,
+        to: runStates.PUSHING,
+      },
+      {
+        from: runStates.PUSHING,
+        to: runStates.CREATING_PR,
+      },
+      {
+        from: runStates.CREATING_PR,
+        to: runStates.WAITING_FOR_CI,
+      },
+      {
+        from: runStates.WAITING_FOR_CI,
+        to: runStates.CI_PASSED,
+      },
+      {
+        from: runStates.CI_PASSED,
+        to: runStates.COMPLETED,
+      },
+    ],
+  );
+});

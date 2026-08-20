@@ -13,6 +13,11 @@ import {
 } from "../../../../packages/domain/src/git/index.js";
 
 import {
+  type CiObserver,
+  type PullRequestPublisher,
+} from "../../../../packages/domain/src/github/index.js";
+
+import {
   createOrchestrationRun,
   failRun,
   runStates,
@@ -37,6 +42,8 @@ export const executionFailureCodes = {
   AGENT_EXECUTION_FAILED: "AGENT_EXECUTION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
   GIT_BOUNDARY_FAILED: "GIT_BOUNDARY_FAILED",
+  PR_PUBLISH_FAILED: "PR_PUBLISH_FAILED",
+  CI_OBSERVATION_FAILED: "CI_OBSERVATION_FAILED",
 } as const;
 
 export type RunValidator = WorkspaceValidator;
@@ -67,6 +74,8 @@ export interface ExecuteRunDependencies {
   readonly agentExecutor: AgentExecutor;
   readonly validator: RunValidator;
   readonly gitPublisher: GitPublisher;
+  readonly pullRequestPublisher?: PullRequestPublisher;
+  readonly ciObserver?: CiObserver;
   readonly now?: () => Date;
 }
 
@@ -288,6 +297,116 @@ export async function executeRun(
       gitCommit: commit,
       ...(gitFailure === undefined ? {} : { gitFailure }),
     };
+  }
+
+  if (dependencies.pullRequestPublisher !== undefined) {
+    run = transitionRun(run, runStates.CREATING_PR, now());
+
+    let publication;
+    try {
+      publication = await dependencies.pullRequestPublisher.publish({
+        repository: workspace.repositoryPath,
+        baseBranch: "develop",
+        headBranch: gitPublish.pushedBranch,
+        headCommitSha: gitPublish.commitSha,
+        issueId: request.workspace.issueId,
+        issueTitle: request.workspace.issueId,
+        body: [
+          `Issue: ${request.workspace.issueId}`,
+          `Branch: ${gitPublish.pushedBranch}`,
+          `Commit: ${gitPublish.commitSha}`,
+          "Merge is not performed by this boundary.",
+        ].join("\n"),
+      });
+    } catch (error) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.PR_PUBLISH_FAILED,
+            message: getFailureMessage(error),
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    if (
+      publication.baseBranch !== "develop" ||
+      publication.headBranch !== gitPublish.pushedBranch ||
+      publication.headCommitSha !== gitPublish.commitSha ||
+      publication.repository !== workspace.repositoryPath
+    ) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.PR_PUBLISH_FAILED,
+            message: "Published pull request did not match trusted identity",
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    run = transitionRun(run, runStates.WAITING_FOR_CI, now());
+
+    if (dependencies.ciObserver !== undefined) {
+      let observation;
+      try {
+        observation = await dependencies.ciObserver.observe({
+          repository: publication.repository,
+          pullRequestNumber: publication.number,
+          expectedHeadSha: publication.headCommitSha,
+        });
+      } catch (error) {
+        return {
+          run: failRun(
+            run,
+            {
+              code: executionFailureCodes.CI_OBSERVATION_FAILED,
+              message: getFailureMessage(error),
+            },
+            now(),
+          ),
+          workspace,
+          agentExecution,
+          gitInspection,
+          gitCommit: commit,
+          gitPublish,
+        };
+      }
+
+      if (observation.state !== "success") {
+        return {
+          run: failRun(
+            run,
+            {
+              code: executionFailureCodes.CI_OBSERVATION_FAILED,
+              message: `CI observation ended in ${observation.state}`,
+            },
+            now(),
+          ),
+          workspace,
+          agentExecution,
+          gitInspection,
+          gitCommit: commit,
+          gitPublish,
+        };
+      }
+    }
+
+    run = transitionRun(run, runStates.CI_PASSED, now());
   }
 
   run = transitionRun(run, runStates.COMPLETED, now());
