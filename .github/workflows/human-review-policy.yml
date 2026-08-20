@@ -28,7 +28,7 @@ jobs:
           node-version-file: .nvmrc
       - name: Enforce conditional human review
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
