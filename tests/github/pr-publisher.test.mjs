@@ -13,7 +13,7 @@ function createPublisher(responses, calls) {
   });
 }
 
-test("publishes or resolves exactly one PR on develop", async () => {
+test("publishes or resolves exactly one PR on main", async () => {
   const calls = [];
   const publisher = createPublisher(
     [
@@ -23,7 +23,7 @@ test("publishes or resolves exactly one PR on develop", async () => {
         number: 7,
         html_url: "https://github.com/allan/repo/pull/7",
         head: { ref: "feature", sha: "abc" },
-        base: { ref: "develop" },
+        base: { ref: "main" },
       },
     ],
     calls,
@@ -31,7 +31,7 @@ test("publishes or resolves exactly one PR on develop", async () => {
 
   const result = await publisher.publish({
     repository: "allan/repo",
-    baseBranch: "develop",
+    baseBranch: "main",
     headBranch: "feature",
     headCommitSha: "abc",
     issueId: "ALL-317",
@@ -40,29 +40,29 @@ test("publishes or resolves exactly one PR on develop", async () => {
   });
 
   assert.equal(result.number, 7);
-  assert.equal(result.baseBranch, "develop");
+  assert.equal(result.baseBranch, "main");
   assert.equal(result.created, true);
   assert.equal(calls[0][0], "api");
-  assert.equal(calls[0].includes("base=develop"), true);
+  assert.equal(calls[0].includes("base=main"), true);
   assert.equal(calls[1][0], "api");
-  assert.equal(calls[1].includes("base=develop"), true);
+  assert.equal(calls[1].includes("base=main"), true);
 });
 
-test("rejects non-develop bases", async () => {
+test("rejects non-main bases", async () => {
   const publisher = createPublisher([], []);
 
   await assert.rejects(
     () =>
       publisher.publish({
         repository: "allan/repo",
-        baseBranch: "main",
+        baseBranch: "develop",
         headBranch: "feature",
         headCommitSha: "abc",
         issueId: "ALL-317",
         issueTitle: "GitHub PR and CI Observation Boundary",
         body: "body",
       }),
-    /develop/,
+    /main/,
   );
 });
 
@@ -75,7 +75,7 @@ test("rejects PRs whose returned SHA does not match the trusted commit", async (
         number: 7,
         html_url: "https://github.com/allan/repo/pull/7",
         head: { ref: "feature", sha: "different" },
-        base: { ref: "develop" },
+        base: { ref: "main" },
       },
     ],
     [],
@@ -85,7 +85,7 @@ test("rejects PRs whose returned SHA does not match the trusted commit", async (
     () =>
       publisher.publish({
         repository: "allan/repo",
-        baseBranch: "develop",
+        baseBranch: "main",
         headBranch: "feature",
         headCommitSha: "abc",
         issueId: "ALL-317",

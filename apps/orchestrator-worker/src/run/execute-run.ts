@@ -66,6 +66,7 @@ export interface ExecuteRunGitFailure {
 export interface ExecuteRunRequest {
   readonly runId: string;
   readonly instruction: string;
+  readonly repository: string;
   readonly workspace: CreateWorkspaceRequest;
 }
 
@@ -305,8 +306,8 @@ export async function executeRun(
     let publication;
     try {
       publication = await dependencies.pullRequestPublisher.publish({
-        repository: workspace.repositoryPath,
-        baseBranch: "develop",
+        repository: request.repository,
+        baseBranch: "main",
         headBranch: gitPublish.pushedBranch,
         headCommitSha: gitPublish.commitSha,
         issueId: request.workspace.issueId,
@@ -337,10 +338,10 @@ export async function executeRun(
     }
 
     if (
-      publication.baseBranch !== "develop" ||
+      publication.baseBranch !== "main" ||
       publication.headBranch !== gitPublish.pushedBranch ||
       publication.headCommitSha !== gitPublish.commitSha ||
-      publication.repository !== workspace.repositoryPath
+      publication.repository !== request.repository
     ) {
       return {
         run: failRun(

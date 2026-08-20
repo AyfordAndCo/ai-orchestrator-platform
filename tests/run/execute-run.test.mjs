@@ -14,12 +14,13 @@ import {
 
 const request = {
   runId: "run-001",
+  repository: "allan/repo",
   issueTitle: "Test worker lifecycle",
   instruction: "Implement the approved issue specification.",
   workspace: {
     issueId: "ALL-312",
     repositoryPath: "/source",
-    baseBranch: "develop",
+    baseBranch: "main",
     featureBranch: "allan/all-312-test",
     workspacePath: "/workspace/ALL-312",
   },
@@ -624,14 +625,18 @@ test("publishes a pull request and waits for CI when GitHub boundaries are confi
     new Date("2026-08-08T09:11:00.000Z"),
   ];
 
+  let publicationRequest;
+  let observationRequest;
+
   const pullRequestPublisher = {
-    async publish() {
+    async publish(value) {
+      publicationRequest = value;
       return {
         number: 17,
         url: "https://github.com/allan/repo/pull/17",
-        repository: "/source",
+        repository: "allan/repo",
         headBranch: request.workspace.featureBranch,
-        baseBranch: "develop",
+        baseBranch: "main",
         headCommitSha: "a".repeat(40),
         created: true,
       };
@@ -639,7 +644,8 @@ test("publishes a pull request and waits for CI when GitHub boundaries are confi
   };
 
   const ciObserver = {
-    async observe() {
+    async observe(value) {
+      observationRequest = value;
       return {
         state: "success",
         checks: [],
@@ -664,6 +670,9 @@ test("publishes a pull request and waits for CI when GitHub boundaries are confi
   });
 
   assert.equal(result.run.state, runStates.COMPLETED);
+  assert.equal(publicationRequest.repository, request.repository);
+  assert.equal(publicationRequest.baseBranch, "main");
+  assert.equal(observationRequest.repository, request.repository);
   assert.deepEqual(
     result.run.transitions.map(({ from, to }) => ({ from, to })),
     [

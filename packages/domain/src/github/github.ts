@@ -78,7 +78,7 @@ export interface GitHubClient {
 
 export interface PullRequestPublicationRequest {
   readonly repository: string;
-  readonly baseBranch: "develop";
+  readonly baseBranch: "main";
   readonly headBranch: string;
   readonly headCommitSha: string;
   readonly issueId: string;
@@ -91,7 +91,7 @@ export interface PullRequestPublicationResult {
   readonly url: string;
   readonly repository: string;
   readonly headBranch: string;
-  readonly baseBranch: "develop";
+  readonly baseBranch: "main";
   readonly headCommitSha: string;
   readonly created: boolean;
 }

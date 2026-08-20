@@ -21,7 +21,7 @@ test("maps check runs into provider-neutral CI states", async () => {
     [
       {
         head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
+        base: { ref: "main" },
         html_url: "https://github.com/allan/repo/pull/7",
       },
       {
@@ -56,7 +56,7 @@ test("fails closed when the PR head SHA changes", async () => {
     [
       {
         head: { sha: "different", ref: "feature" },
-        base: { ref: "develop" },
+        base: { ref: "main" },
         html_url: "https://github.com/allan/repo/pull/7",
       },
     ],
@@ -78,7 +78,7 @@ test("fails closed when the PR base branch changes", async () => {
     [
       {
         head: { sha: "abc", ref: "feature" },
-        base: { ref: "main" },
+        base: { ref: "develop" },
         html_url: "https://github.com/allan/repo/pull/7",
       },
     ],
@@ -115,7 +115,7 @@ test("times out when checks never resolve", async () => {
       return {
         stdout: JSON.stringify({
           head: { sha: "abc", ref: "feature" },
-          base: { ref: "develop" },
+          base: { ref: "main" },
           html_url: "https://github.com/allan/repo/pull/7",
         }),
       };

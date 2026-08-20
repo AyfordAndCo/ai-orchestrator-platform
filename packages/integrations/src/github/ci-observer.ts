@@ -134,7 +134,7 @@ export class GhCliCiObserver implements CiObserver {
       if (
         pullRequest.head.sha !== request.expectedHeadSha ||
         pullRequest.head.ref.trim().length === 0 ||
-        pullRequest.base.ref !== "develop"
+        pullRequest.base.ref !== "main"
       ) {
         return {
           state: "failure",

@@ -304,6 +304,7 @@ process.stdout.write(
       executePnpmRun(
         {
           runId: "all-315-real-codex-success",
+          repository: "allan/repo",
           issueTitle: "Real Codex success",
           instruction,
           workspace: createWorkspaceRequest(fixture.workspacePath),
@@ -369,6 +370,7 @@ process.exit(9);
       executePnpmRun(
         {
           runId: "all-315-real-validation-failure",
+          repository: "allan/repo",
           instruction: "Implement test change.",
           workspace: createWorkspaceRequest(fixture.workspacePath),
         },
@@ -428,6 +430,7 @@ await writeFile(
       executePnpmRun(
         {
           runId: "all-315-real-provider-failure",
+          repository: "allan/repo",
           instruction: "TEST_PROVIDER_FAILURE",
           workspace: createWorkspaceRequest(fixture.workspacePath),
         },
@@ -489,11 +492,9 @@ process.stdout.write("worker-validation-ok");
       executePnpmRun(
         {
           runId: "all-315-github-config",
+          repository: "allan/repo",
           instruction: "Implement test change.",
-          workspace: createWorkspaceRequest(
-            fixture.workspacePath,
-            "allan/repo",
-          ),
+          workspace: createWorkspaceRequest(fixture.workspacePath),
         },
         {
           workspaceProvisioner: createProvisioner(),

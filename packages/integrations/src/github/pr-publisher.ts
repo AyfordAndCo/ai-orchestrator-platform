@@ -44,11 +44,11 @@ function parseJson<T>(output: string, operation: string): T {
   }
 }
 
-function requireDevelopBase(baseBranch: string): "develop" {
-  if (baseBranch !== "develop") {
-    throw new RangeError("baseBranch must be develop");
+function requireMainBase(baseBranch: string): "main" {
+  if (baseBranch !== "main") {
+    throw new RangeError("baseBranch must be main");
   }
-  return "develop";
+  return "main";
 }
 
 function createGhCommand(executablePath: string): {
@@ -109,7 +109,7 @@ export class GhCliPullRequestPublisher implements PullRequestPublisher {
     request: PullRequestPublicationRequest,
   ): Promise<PullRequestPublicationResult> {
     const repository = repositoryPath(request.repository);
-    const baseBranch = requireDevelopBase(request.baseBranch);
+    const baseBranch = requireMainBase(request.baseBranch);
     const owner = repository.split("/")[0];
     const existing = await this.#api<
       Array<{

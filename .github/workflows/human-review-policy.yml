@@ -2,12 +2,8 @@ name: Human review policy
 
 on:
   pull_request:
-    branches:
-      - main
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
-    branches:
-      - main
     types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
@@ -26,6 +22,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
+      - name: Request required human reviewer
+        env:
+          GH_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REQUIRED_HUMAN_REVIEWER: ${{ vars.REQUIRED_HUMAN_REVIEWER || 'allanayford-dev' }}
+        run: >-
+          gh pr edit "$PR_NUMBER"
+          --repo "$GITHUB_REPOSITORY"
+          --add-reviewer "$REQUIRED_HUMAN_REVIEWER"
       - name: Enforce conditional human review
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
