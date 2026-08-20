@@ -517,7 +517,7 @@ process.stdout.write("worker-validation-ok");
             },
           },
           ciObserver: {
-            async observe(request) {
+            async observe() {
               return {
                 state: "success",
                 checks: [
