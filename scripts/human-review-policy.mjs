@@ -7,9 +7,9 @@ let headSha = process.env.HEAD_SHA;
 const requiredReviewer =
   process.env.REQUIRED_HUMAN_REVIEWER || "allanayford-dev";
 
-if (!token || !repository || !pullRequestNumber || !headSha) {
+if (!token || !repository || !pullRequestNumber) {
   throw new Error(
-    "GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, and HEAD_SHA are required",
+    "GITHUB_TOKEN, GITHUB_REPOSITORY, and PR_NUMBER are required",
   );
 }
 
@@ -88,10 +88,23 @@ if (!approved) {
   const pullRequest = await github(
     `/repos/${repository}/pulls/${pullRequestNumber}`,
   );
-  const authorMayApproveByComment =
-    pullRequest.user?.login === requiredReviewer;
+  const authorMaySelfApprove = pullRequest.user?.login === requiredReviewer;
 
-  if (authorMayApproveByComment) {
+  if (authorMaySelfApprove) {
+    const authorReviews = reviews
+      .filter((review) => review.user?.login === pullRequest.user?.login)
+      .sort(
+        (left, right) =>
+          new Date(left.submitted_at ?? 0).getTime() -
+          new Date(right.submitted_at ?? 0).getTime(),
+      );
+    const latestAuthorReview = authorReviews.at(-1);
+    approved =
+      latestAuthorReview?.state === "APPROVED" &&
+      latestAuthorReview.commit_id === headSha;
+  }
+
+  if (!approved && pullRequest.user?.login === requiredReviewer) {
     const comments = await github(
       `/repos/${repository}/issues/${pullRequestNumber}/comments?per_page=100`,
     );

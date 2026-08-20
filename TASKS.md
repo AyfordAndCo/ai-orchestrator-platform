@@ -100,6 +100,7 @@
 - [x] Enforce runtime read isolation from unrelated host secrets and privileged resources.
 - [x] Complete real-host smoke through the compiled adapter in a disposable repository.
 - [x] `pnpm validate` passes with 55 tests.
+- [ ] Replace Windows-only executor test skips with cross-platform coverage if CI requires it.
 
 ## Trunk-Based Stacked PR Lifecycle — Planned
 

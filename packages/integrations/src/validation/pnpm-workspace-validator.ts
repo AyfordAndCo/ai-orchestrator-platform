@@ -179,6 +179,18 @@ function createValidationProcess(
   }
 
   if (sandbox === undefined) {
+    const pnpmExecPath = (environment ?? process.env).npm_execpath;
+
+    if (pnpmExecPath !== undefined && pnpmExecPath.trim().length > 0) {
+      return spawn(process.execPath, [pnpmExecPath, "validate"], {
+        cwd: workspacePath,
+        shell: false,
+        env: validationEnvironment(environment),
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+
     return spawn("pnpm", ["validate"], {
       cwd: workspacePath,
       shell: false,
