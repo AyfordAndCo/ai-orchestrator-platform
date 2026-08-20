@@ -28,10 +28,15 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           REQUIRED_HUMAN_REVIEWER: ${{ vars.REQUIRED_HUMAN_REVIEWER || 'allanayford-dev' }}
-        run: >-
-          gh api --method POST
-          "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers"
-          -f "reviewers[]=$REQUIRED_HUMAN_REVIEWER"
+        run: |
+          pr_author="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')"
+          if [ "$pr_author" = "$REQUIRED_HUMAN_REVIEWER" ]; then
+            echo "Skipping reviewer request because @${REQUIRED_HUMAN_REVIEWER} authored the PR."
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
+              -f "reviewers[]=$REQUIRED_HUMAN_REVIEWER"
+          fi
       - name: Enforce conditional human review
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
