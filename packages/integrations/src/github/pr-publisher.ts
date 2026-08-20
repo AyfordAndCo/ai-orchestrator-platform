@@ -18,8 +18,12 @@ interface GhResult {
 export interface GhCliPullRequestPublisherOptions {
   readonly executablePath: string;
   readonly environment?: NodeJS.ProcessEnv;
+  /** GitHub login that must own every PR created by this publisher. */
+  readonly requiredActor?: string;
   readonly execFileImplementation?: typeof execFileAsync;
 }
+
+const DEFAULT_REQUIRED_ACTOR = "ai-orchestrator-bot";
 
 function requireText(name: string, value: string): string {
   if (value.trim().length === 0) {
@@ -71,6 +75,7 @@ function createGhCommand(executablePath: string): {
 export class GhCliPullRequestPublisher implements PullRequestPublisher {
   readonly #executablePath: string;
   readonly #environment: NodeJS.ProcessEnv | undefined;
+  readonly #requiredActor: string;
   readonly #execFile: typeof execFileAsync;
 
   constructor(options: GhCliPullRequestPublisherOptions) {
@@ -79,6 +84,10 @@ export class GhCliPullRequestPublisher implements PullRequestPublisher {
     }
     this.#executablePath = options.executablePath;
     this.#environment = options.environment;
+    this.#requiredActor = requireText(
+      "requiredActor",
+      options.requiredActor ?? DEFAULT_REQUIRED_ACTOR,
+    );
     this.#execFile = options.execFileImplementation ?? execFileAsync;
   }
 
@@ -110,6 +119,16 @@ export class GhCliPullRequestPublisher implements PullRequestPublisher {
   ): Promise<PullRequestPublicationResult> {
     const repository = repositoryPath(request.repository);
     const baseBranch = requireMainBase(request.baseBranch);
+    const actor = await this.#api<{ login?: string }>(
+      "verify GitHub service user",
+      "user",
+    );
+    if (actor.login !== this.#requiredActor) {
+      throw new Error(
+        `GitHub PR publication requires @${this.#requiredActor}; authenticated actor was @${actor.login ?? "unknown"}`,
+      );
+    }
+
     const owner = repository.split("/")[0];
     const existing = await this.#api<
       Array<{

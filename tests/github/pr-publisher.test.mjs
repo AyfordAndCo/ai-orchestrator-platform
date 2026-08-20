@@ -17,6 +17,7 @@ test("publishes or resolves exactly one PR on main", async () => {
   const calls = [];
   const publisher = createPublisher(
     [
+      { login: "ai-orchestrator-bot" },
       [],
       {
         id: 7,
@@ -43,9 +44,11 @@ test("publishes or resolves exactly one PR on main", async () => {
   assert.equal(result.baseBranch, "main");
   assert.equal(result.created, true);
   assert.equal(calls[0][0], "api");
-  assert.equal(calls[0].includes("base=main"), true);
+  assert.equal(calls[0][1], "user");
   assert.equal(calls[1][0], "api");
   assert.equal(calls[1].includes("base=main"), true);
+  assert.equal(calls[2][0], "api");
+  assert.equal(calls[2].includes("base=main"), true);
 });
 
 test("rejects non-main bases", async () => {
@@ -69,6 +72,7 @@ test("rejects non-main bases", async () => {
 test("rejects PRs whose returned SHA does not match the trusted commit", async () => {
   const publisher = createPublisher(
     [
+      { login: "ai-orchestrator-bot" },
       [],
       {
         id: 7,
@@ -94,4 +98,60 @@ test("rejects PRs whose returned SHA does not match the trusted commit", async (
       }),
     /head SHA/,
   );
+});
+
+test("rejects publication when the GitHub token belongs to a human actor", async () => {
+  const publisher = createPublisher([{ login: "allanayford-dev" }], []);
+
+  await assert.rejects(
+    () =>
+      publisher.publish({
+        repository: "allan/repo",
+        baseBranch: "main",
+        headBranch: "feature",
+        headCommitSha: "abc",
+        issueId: "ALL-383",
+        issueTitle: "Bot-owned pull requests",
+        body: "body",
+      }),
+    /requires @ai-orchestrator-bot.*allanayford-dev/,
+  );
+});
+
+test("allows an explicitly configured service user", async () => {
+  const calls = [];
+  const publisher = new GhCliPullRequestPublisher({
+    executablePath: "/usr/bin/gh",
+    requiredActor: "release-bot",
+    execFileImplementation: async (_file, args) => {
+      calls.push(args);
+      return {
+        stdout: JSON.stringify(
+          calls.length === 1
+            ? { login: "release-bot" }
+            : calls.length === 2
+              ? []
+              : {
+                  id: 8,
+                  number: 8,
+                  html_url: "https://github.com/allan/repo/pull/8",
+                  head: { ref: "feature", sha: "abc" },
+                  base: { ref: "main" },
+                },
+        ),
+      };
+    },
+  });
+
+  const result = await publisher.publish({
+    repository: "allan/repo",
+    baseBranch: "main",
+    headBranch: "feature",
+    headCommitSha: "abc",
+    issueId: "ALL-383",
+    issueTitle: "Bot-owned pull requests",
+    body: "body",
+  });
+
+  assert.equal(result.number, 8);
 });
