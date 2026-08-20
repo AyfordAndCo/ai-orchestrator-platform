@@ -181,10 +181,7 @@ process.exit(
       `@echo off\r\n"${process.execPath}" "%~dp0pnpm.mjs" %*\r\n`,
     );
   } else {
-    await writeFile(
-      pnpmPath,
-      `#!${process.execPath}\nimport "./pnpm.mjs";\n`,
-    );
+    await writeFile(pnpmPath, `#!${process.execPath}\nimport "./pnpm.mjs";\n`);
     await chmod(pnpmPath, 0o755);
   }
 
