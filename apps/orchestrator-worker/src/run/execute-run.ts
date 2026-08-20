@@ -422,7 +422,6 @@ export async function executeRun(
         gitPublish,
       };
     }
-
     run = transitionRun(run, runStates.CI_PASSED, now());
   }
 

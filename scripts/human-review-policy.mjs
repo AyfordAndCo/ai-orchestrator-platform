@@ -7,9 +7,9 @@ let headSha = process.env.HEAD_SHA;
 const requiredReviewer =
   process.env.REQUIRED_HUMAN_REVIEWER || "allanayford-dev";
 
-if (!token || !repository || !pullRequestNumber || !headSha) {
+if (!token || !repository || !pullRequestNumber) {
   throw new Error(
-    "GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, and HEAD_SHA are required",
+    "GITHUB_TOKEN, GITHUB_REPOSITORY, and PR_NUMBER are required",
   );
 }
 
