@@ -277,7 +277,9 @@ process.stdout.write("should-not-run");
   try {
     process.env.PATH = "";
 
-    const validator = new PnpmWorkspaceValidator();
+    const validator = new PnpmWorkspaceValidator({
+      environment: { PATH: "" },
+    });
 
     await assert.rejects(
       validator.validate(createWorkspace(workspacePath)),

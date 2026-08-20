@@ -179,7 +179,7 @@ function createValidationProcess(
   }
 
   if (sandbox === undefined) {
-    const pnpmExecPath = process.env.npm_execpath;
+    const pnpmExecPath = (environment ?? process.env).npm_execpath;
 
     if (pnpmExecPath !== undefined && pnpmExecPath.trim().length > 0) {
       return spawn(process.execPath, [pnpmExecPath, "validate"], {
