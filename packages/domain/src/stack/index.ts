@@ -18,10 +18,15 @@ export type { GateKind, GateResult, GateState } from "./gates.js";
 
 export {
   PhaseCheckpointError,
+  StalePhaseCheckpointError,
   createPhaseCheckpoint,
   durablePhaseStates,
   failPhase,
   startPhase,
   succeedPhase,
 } from "./phases.js";
-export type { DurablePhaseState, PhaseCheckpoint } from "./phases.js";
+export type {
+  DurablePhaseState,
+  PhaseCheckpoint,
+  PhaseCheckpointStore,
+} from "./phases.js";
