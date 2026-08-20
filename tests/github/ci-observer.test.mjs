@@ -97,47 +97,32 @@ test("fails closed when the PR base branch changes", async () => {
 
 test("times out when checks never resolve", async () => {
   const calls = [];
-  const observer = createObserver(
-    [
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-      {
-        check_runs: [{ name: "build", status: "queued", conclusion: null }],
-      },
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-      {
-        check_runs: [{ name: "build", status: "queued", conclusion: null }],
-      },
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-      {
-        check_runs: [
-          { name: "build", status: "in_progress", conclusion: null },
-        ],
-      },
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-      {
-        check_runs: [
-          { name: "build", status: "in_progress", conclusion: null },
-        ],
-      },
-    ],
-    calls,
-  );
+  const observer = new GhCliCiObserver({
+    executablePath: "/usr/bin/gh",
+    execFileImplementation: async (_file, args) => {
+      calls.push(args);
+
+      if (args.some((arg) => String(arg).includes("/pulls/7/checks"))) {
+        return {
+          stdout: JSON.stringify({
+            check_runs: [
+              { name: "build", status: "in_progress", conclusion: null },
+            ],
+          }),
+        };
+      }
+
+      return {
+        stdout: JSON.stringify({
+          head: { sha: "abc", ref: "feature" },
+          base: { ref: "develop" },
+          html_url: "https://github.com/allan/repo/pull/7",
+        }),
+      };
+    },
+    timeoutMs: 10,
+    pollIntervalMs: 1,
+  });
 
   const result = await observer.observe({
     repository: "allan/repo",
