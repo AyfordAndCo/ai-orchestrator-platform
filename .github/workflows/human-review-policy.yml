@@ -29,9 +29,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           REQUIRED_HUMAN_REVIEWER: ${{ vars.REQUIRED_HUMAN_REVIEWER || 'allanayford-dev' }}
         run: >-
-          gh pr edit "$PR_NUMBER"
-          --repo "$GITHUB_REPOSITORY"
-          --add-reviewer "$REQUIRED_HUMAN_REVIEWER"
+          gh api --method POST
+          "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers"
+          -f "reviewers[]=$REQUIRED_HUMAN_REVIEWER"
       - name: Enforce conditional human review
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
