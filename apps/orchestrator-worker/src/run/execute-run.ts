@@ -360,9 +360,9 @@ export async function executeRun(
       };
     }
 
-    run = transitionRun(run, runStates.WAITING_FOR_CI, now());
-
     if (dependencies.ciObserver !== undefined) {
+      run = transitionRun(run, runStates.WAITING_FOR_CI, now());
+
       let observation;
       try {
         observation = await dependencies.ciObserver.observe({
@@ -405,9 +405,9 @@ export async function executeRun(
           gitPublish,
         };
       }
-    }
 
-    run = transitionRun(run, runStates.CI_PASSED, now());
+      run = transitionRun(run, runStates.CI_PASSED, now());
+    }
   }
 
   run = transitionRun(run, runStates.COMPLETED, now());

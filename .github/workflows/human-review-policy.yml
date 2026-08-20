@@ -41,7 +41,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SERVICE_USER_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           REQUIRED_HUMAN_REVIEWER: ${{ vars.REQUIRED_HUMAN_REVIEWER || 'allanayford-dev' }}
         run: node scripts/human-review-policy.mjs
