@@ -1,6 +1,12 @@
 export { StackError, stackErrorCodes } from "./stack-errors.js";
 export type { StackErrorCode } from "./stack-errors.js";
 
+export { runDurablePhase } from "./durable-phase-runner.js";
+export type {
+  DurablePhaseExecution,
+  DurablePhaseResult,
+} from "./durable-phase-runner.js";
+
 export {
   addStackBranch,
   createStack,
