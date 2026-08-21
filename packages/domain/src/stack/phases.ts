@@ -28,6 +28,24 @@ export class PhaseCheckpointError extends Error {
   }
 }
 
+export interface PhaseCheckpointStore {
+  load(runId: string, phase: string): Promise<PhaseCheckpoint | undefined>;
+  save(
+    runId: string,
+    checkpoint: PhaseCheckpoint,
+    expectedUpdatedAt?: Date,
+  ): Promise<void>;
+}
+
+export class StalePhaseCheckpointError extends Error {
+  readonly code = "STALE_PHASE_CHECKPOINT" as const;
+
+  constructor(runId: string, phase: string) {
+    super(`Phase checkpoint is stale for ${runId}:${phase}`);
+    this.name = "StalePhaseCheckpointError";
+  }
+}
+
 export function createPhaseCheckpoint(
   phase: string,
   idempotencyKey: string,
