@@ -89,7 +89,7 @@ function createCodexEnvironment(): NodeJS.ProcessEnv {
     ? process.env.LOGNAME
     : user;
 
-  return {
+  const environment: NodeJS.ProcessEnv = {
     HOME: home,
     PATH: path,
     USER: user,
@@ -97,6 +97,23 @@ function createCodexEnvironment(): NodeJS.ProcessEnv {
     LANG: process.env.LANG?.trim().length ? process.env.LANG : "C.UTF-8",
     TERM: "dumb",
   };
+
+  if (process.platform === "win32") {
+    if (process.env.SYSTEMROOT?.trim().length) {
+      environment.SYSTEMROOT = process.env.SYSTEMROOT;
+    }
+    if (process.env.COMSPEC?.trim().length) {
+      environment.COMSPEC = process.env.COMSPEC;
+    }
+    if (process.env.PATHEXT?.trim().length) {
+      environment.PATHEXT = process.env.PATHEXT;
+    }
+    if (process.env.WINDIR?.trim().length) {
+      environment.WINDIR = process.env.WINDIR;
+    }
+  }
+
+  return environment;
 }
 
 async function requireSafeWorkspace(
@@ -178,9 +195,17 @@ async function requireSafeWorkspace(
 }
 
 function createCodexProcess(executablePath: string, workspacePath: string) {
-  return spawn(executablePath, [...CODEX_ARGUMENTS], {
+  const command = /\.(?:mjs|cjs|js)$/i.test(executablePath)
+    ? process.execPath
+    : executablePath;
+  const args = /\.(?:mjs|cjs|js)$/i.test(executablePath)
+    ? [executablePath, ...CODEX_ARGUMENTS]
+    : [...CODEX_ARGUMENTS];
+
+  return spawn(command, args, {
     cwd: workspacePath,
-    shell: false,
+    shell:
+      process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executablePath),
     detached: process.platform !== "win32",
     env: createCodexEnvironment(),
     stdio: ["pipe", "pipe", "pipe"],

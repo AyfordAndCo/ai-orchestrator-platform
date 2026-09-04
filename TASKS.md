@@ -100,3 +100,66 @@
 - [x] Enforce runtime read isolation from unrelated host secrets and privileged resources.
 - [x] Complete real-host smoke through the compiled adapter in a disposable repository.
 - [x] `pnpm validate` passes with 55 tests.
+- [ ] Replace Windows-only executor test skips with cross-platform coverage if CI requires it.
+
+## Trunk-Based Stacked PR Lifecycle — Planned
+
+The implementation order and decisions for this work are recorded in
+`docs/architecture/trunk-based-lifecycle-decisions.md`.
+
+### Phase 1 — Domain and workflow contracts
+
+- [x] Define `main` as the protected trunk branch.
+- [x] Define `Stack`, `PullRequest`, `StackBranch`, and gate result contracts.
+- [x] Add `stackId`, `stackOrder`, and `parentBranch` to branch/run context.
+- [x] Define the PR lifecycle and merge-readiness gates.
+- [x] Define durable phase checkpoints and idempotency keys.
+- [x] Define resumable failure and retry semantics.
+- [x] Add domain tests for stack ordering, parent relationships, and gate ordering.
+
+### Phase 2 — Safe execution and validation handoff
+
+- [x] Run validation in a restricted execution environment separate from the host.
+- [x] Add Docker Hub digest-pinned container validation for production workers.
+- [x] Add a minimal non-root Docker validation image definition.
+- [x] Add a manually gated Docker Hub image publishing workflow.
+- [x] Bind validation to an immutable candidate tree or commit SHA.
+- [x] Prevent post-validation workspace mutation from changing the candidate.
+- [x] Preserve bounded diagnostics without exposing secrets.
+- [x] Add regression tests for validation isolation and candidate integrity.
+
+### Phase 3 — Provider registry and model routing
+
+- [x] Define provider-neutral execution, review, and capability contracts.
+- [ ] Add configurable workflow defaults and per-task model overrides.
+- [ ] Add capability requirements and model eligibility checks.
+- [x] Add OpenAI-compatible HTTP adapter for Ollama, OpenAI, and OpenRouter.
+- [x] Add Gemini adapter and provider-specific request/response mapping.
+- [ ] Keep Codex CLI behind the existing secured adapter boundary.
+- [ ] Restrict credentials to provider adapters and add configuration tests.
+- [ ] Enforce implementation/review provider or model independence.
+
+### Phase 4 — GitHub PR and stacked-branch integration
+
+- [x] Define GitHub adapter contracts for branches, PRs, checks, reviews, and conflicts.
+- [ ] Create one PR per run and group PRs by `stackId`.
+- [ ] Set each PR base to its recorded `parentBranch`.
+- [ ] Track CI, review, QA, and security gate results durably.
+- [ ] Add explicit downstream stack update/rebase operation.
+- [ ] Attempt automatic conflict resolution in an isolated run.
+- [ ] Block and request human resolution when conflict resolution fails.
+- [x] Push verified commit SHAs rather than mutable branch refs.
+- [ ] Add GitHub integration tests with provider fakes.
+- [x] Add independent Gemini and OpenRouter review quorum workflow.
+
+### Phase 5 — Recovery, operations, and merge readiness
+
+- [ ] Persist phase checkpoints and make every phase restart idempotent.
+- [ ] Resume interrupted runs from the last durable phase.
+- [ ] Add reconciliation for branch, PR, CI, and stack state drift.
+- [ ] Stop the orchestrator at `MERGE_READY`; delegate merging to GitHub protection/queue.
+- [ ] Add observability for stack progress, gate failures, retries, and blocked work.
+- [ ] Document operator procedures for retries, conflicts, and manual approvals.
+- [x] Configure conditional human review policy for sensitive changes.
+- [ ] Add end-to-end lifecycle tests for single and stacked PRs.
+- [ ] Run independent security and workflow review before enabling hosted execution.

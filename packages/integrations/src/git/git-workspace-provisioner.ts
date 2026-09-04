@@ -244,6 +244,13 @@ export class GitWorkspaceProvisioner implements WorkspaceProvisioner {
 
     return {
       issueId: request.issueId,
+      ...(request.stackId === undefined ? {} : { stackId: request.stackId }),
+      ...(request.stackOrder === undefined
+        ? {}
+        : { stackOrder: request.stackOrder }),
+      ...(request.parentBranch === undefined
+        ? {}
+        : { parentBranch: request.parentBranch }),
       repositoryPath: request.repositoryPath,
       workspacePath: request.workspacePath,
       baseBranch: request.baseBranch,

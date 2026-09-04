@@ -7,9 +7,15 @@ import {
   GitBoundaryError,
   type GitBoundaryErrorCode,
   type GitChangeInspectionResult,
+  type GitCommitResult,
   type GitPublishResult,
   type GitPublisher,
 } from "../../../../packages/domain/src/git/index.js";
+
+import {
+  type CiObserver,
+  type PullRequestPublisher,
+} from "../../../../packages/domain/src/github/index.js";
 
 import {
   createOrchestrationRun,
@@ -36,6 +42,8 @@ export const executionFailureCodes = {
   AGENT_EXECUTION_FAILED: "AGENT_EXECUTION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
   GIT_BOUNDARY_FAILED: "GIT_BOUNDARY_FAILED",
+  PR_PUBLISH_FAILED: "PR_PUBLISH_FAILED",
+  CI_OBSERVATION_FAILED: "CI_OBSERVATION_FAILED",
 } as const;
 
 export type RunValidator = WorkspaceValidator;
@@ -58,6 +66,7 @@ export interface ExecuteRunGitFailure {
 export interface ExecuteRunRequest {
   readonly runId: string;
   readonly instruction: string;
+  readonly repository: string;
   readonly workspace: CreateWorkspaceRequest;
 }
 
@@ -66,6 +75,8 @@ export interface ExecuteRunDependencies {
   readonly agentExecutor: AgentExecutor;
   readonly validator: RunValidator;
   readonly gitPublisher: GitPublisher;
+  readonly pullRequestPublisher?: PullRequestPublisher;
+  readonly ciObserver?: CiObserver;
   readonly now?: () => Date;
 }
 
@@ -75,6 +86,7 @@ export interface ExecuteRunResult {
   readonly agentExecution?: AgentExecutionResult;
   readonly validationFailure?: ExecuteRunValidationFailure;
   readonly gitInspection?: GitChangeInspectionResult;
+  readonly gitCommit?: GitCommitResult;
   readonly gitPublish?: GitPublishResult;
   readonly gitFailure?: ExecuteRunGitFailure;
 }
@@ -123,6 +135,17 @@ export async function executeRun(
     request.runId,
     request.workspace.issueId,
     now(),
+    {
+      ...(request.workspace.stackId === undefined
+        ? {}
+        : { stackId: request.workspace.stackId }),
+      ...(request.workspace.stackOrder === undefined
+        ? {}
+        : { stackOrder: request.workspace.stackOrder }),
+      ...(request.workspace.parentBranch === undefined
+        ? {}
+        : { parentBranch: request.workspace.parentBranch }),
+    },
   );
 
   run = transitionRun(run, runStates.PREPARING_WORKSPACE, now());
@@ -177,28 +200,6 @@ export async function executeRun(
     };
   }
 
-  run = transitionRun(run, runStates.VALIDATING, now());
-
-  try {
-    await dependencies.validator.validate(workspace);
-  } catch (error) {
-    const validationFailure = getValidationFailure(error);
-
-    return {
-      run: failRun(
-        run,
-        {
-          code: executionFailureCodes.VALIDATION_FAILED,
-          message: getFailureMessage(error),
-        },
-        now(),
-      ),
-      workspace,
-      agentExecution,
-      ...(validationFailure === undefined ? {} : { validationFailure }),
-    };
-  }
-
   run = transitionRun(run, runStates.INSPECTING_CHANGES, now());
 
   let gitInspection: GitChangeInspectionResult;
@@ -247,6 +248,30 @@ export async function executeRun(
     };
   }
 
+  run = transitionRun(run, runStates.VALIDATING, now());
+
+  try {
+    await dependencies.validator.validate(workspace, commit.commitSha);
+  } catch (error) {
+    const validationFailure = getValidationFailure(error);
+
+    return {
+      run: failRun(
+        run,
+        {
+          code: executionFailureCodes.VALIDATION_FAILED,
+          message: getFailureMessage(error),
+        },
+        now(),
+      ),
+      workspace,
+      agentExecution,
+      gitInspection,
+      gitCommit: commit,
+      ...(validationFailure === undefined ? {} : { validationFailure }),
+    };
+  }
+
   run = transitionRun(run, runStates.PUSHING, now());
 
   let gitPublish: GitPublishResult;
@@ -270,8 +295,134 @@ export async function executeRun(
       workspace,
       agentExecution,
       gitInspection,
+      gitCommit: commit,
       ...(gitFailure === undefined ? {} : { gitFailure }),
     };
+  }
+
+  if (dependencies.pullRequestPublisher !== undefined) {
+    if (dependencies.ciObserver === undefined) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: "CI observer is required before publishing a pull request",
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    run = transitionRun(run, runStates.CREATING_PR, now());
+
+    let publication;
+    try {
+      publication = await dependencies.pullRequestPublisher.publish({
+        repository: request.repository,
+        baseBranch: "main",
+        headBranch: gitPublish.pushedBranch,
+        headCommitSha: gitPublish.commitSha,
+        issueId: request.workspace.issueId,
+        issueTitle: request.workspace.issueId,
+        body: [
+          `Issue: ${request.workspace.issueId}`,
+          `Branch: ${gitPublish.pushedBranch}`,
+          `Commit: ${gitPublish.commitSha}`,
+          "Merge is not performed by this boundary.",
+        ].join("\n"),
+      });
+    } catch (error) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.PR_PUBLISH_FAILED,
+            message: getFailureMessage(error),
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    if (
+      publication.baseBranch !== "main" ||
+      publication.headBranch !== gitPublish.pushedBranch ||
+      publication.headCommitSha !== gitPublish.commitSha ||
+      publication.repository !== request.repository
+    ) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.PR_PUBLISH_FAILED,
+            message: "Published pull request did not match trusted identity",
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    run = transitionRun(run, runStates.WAITING_FOR_CI, now());
+
+    let observation;
+    try {
+      observation = await dependencies.ciObserver.observe({
+        repository: publication.repository,
+        pullRequestNumber: publication.number,
+        expectedHeadSha: publication.headCommitSha,
+      });
+    } catch (error) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: getFailureMessage(error),
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+
+    if (observation.state !== "success") {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.CI_OBSERVATION_FAILED,
+            message: `CI observation ended in ${observation.state}`,
+          },
+          now(),
+        ),
+        workspace,
+        agentExecution,
+        gitInspection,
+        gitCommit: commit,
+        gitPublish,
+      };
+    }
+    run = transitionRun(run, runStates.CI_PASSED, now());
   }
 
   run = transitionRun(run, runStates.COMPLETED, now());
@@ -281,6 +432,7 @@ export async function executeRun(
     workspace,
     agentExecution,
     gitInspection,
+    gitCommit: commit,
     gitPublish,
   };
 }
