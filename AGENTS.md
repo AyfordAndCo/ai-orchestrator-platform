@@ -8,9 +8,19 @@ or automation harness making changes to this repository.
 The workflow is tool-independent. No AI provider or coding harness may bypass
 these rules.
 
+## Organization Engineering Standards
+
+Organization-wide engineering standards are defined in `AyfordAndCo/engineering-standards`:
+https://github.com/AyfordAndCo/engineering-standards
+
+All work must comply with the relevant Clean Code, Clean Architecture, Testing,
+Security, Agent Compliance, and Definition of Done standards. The repository-specific
+rules in this file extend those standards and may be stricter. Do not weaken linting,
+type checks, tests, security checks, or architecture rules merely to make validation pass.
+
 ## Sources of Truth
 
-Use these sources in order:
+Use these sources in order for product and implementation requirements:
 
 1. The assigned issue and its acceptance criteria
 2. SPEC.md
@@ -18,6 +28,7 @@ Use these sources in order:
 4. TASKS.md
 5. Existing repository architecture and tests
 
+All sources remain subject to the mandatory organization engineering standards.
 If requirements conflict, stop and report the conflict rather than guessing.
 
 ## Branching
@@ -70,6 +81,8 @@ Do not:
 - weaken validation rules to obtain a pass
 - ignore TypeScript errors
 - bypass CI checks
+
+Never claim validation passed unless it was actually executed successfully.
 
 ## Testing
 
