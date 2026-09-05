@@ -124,9 +124,13 @@ test("sanitizedGitEnv prevents an ambient GIT_DIR/GIT_WORK_TREE from redirecting
       );
       poisonLogOutput = poisonLog.stdout;
     } catch (error) {
-      // An empty repository with no commits exits non-zero; that is exactly
-      // the expected outcome when the commit correctly did NOT land here.
-      assert.match(String(error), /does not have any commits yet/);
+      // An empty repository with no commits exits with git's standard
+      // "fatal:" status; that is exactly the expected outcome when the
+      // commit correctly did NOT land here. Checked via exit code rather
+      // than the diagnostic text, which is localized under LANG/LC_ALL and
+      // would make this assertion fail for an unrelated reason in a
+      // non-English environment.
+      assert.equal(error.code, 128);
     }
     assert.doesNotMatch(
       poisonLogOutput,
