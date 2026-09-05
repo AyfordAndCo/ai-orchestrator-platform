@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
@@ -38,6 +39,7 @@ test("runs an explicitly declared command and returns bounded output", async () 
   const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
   const validator = new RepositoryCommandValidator({
     command: [process.execPath, "-e", "process.stdout.write('validated')"],
+    spawnImplementation: spawn,
   });
   const result = await validator.validate(workspace(root));
   assert.equal(result.exitCode, 0);
@@ -63,6 +65,7 @@ test("rejects a failing validation command", async () => {
       "-e",
       "process.stderr.write('failed'); process.exit(3)",
     ],
+    spawnImplementation: spawn,
   });
   await assert.rejects(
     validator.validate(workspace(root)),

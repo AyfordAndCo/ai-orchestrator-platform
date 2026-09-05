@@ -10,6 +10,7 @@ import {
   type WorkspaceValidator,
 } from "../../../domain/src/validation/index.js";
 import type { Workspace } from "../../../domain/src/workspace/index.js";
+import type { ValidationContainerOptions } from "./pnpm-workspace-validator.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -53,6 +54,9 @@ export interface RepositoryCommandValidatorOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly command?: readonly [string, ...string[]];
   readonly verifyCandidateCommit?: boolean;
+  readonly container?: ValidationContainerOptions;
+  /** Test seam; production callers must configure the restricted container boundary. */
+  readonly spawnImplementation?: typeof spawn;
 }
 
 export async function detectValidationCommand(
@@ -183,6 +187,12 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
     if (this.#options.timeoutMs <= 0 || this.#options.maxOutputBytes <= 0) {
       throw new RangeError("timeoutMs and maxOutputBytes must be positive");
     }
+    if (
+      this.#options.container !== undefined &&
+      !/@sha256:[0-9a-f]{64}$/i.test(this.#options.container.image)
+    ) {
+      throw new RangeError("container image must be pinned by a sha256 digest");
+    }
   }
 
   async validate(
@@ -218,12 +228,10 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       this.#options.command ??
       (await detectValidationCommand(workspace.workspacePath));
     const started = Date.now();
-    const child = spawn(command[0], command.slice(1), {
-      cwd: workspace.workspacePath,
-      shell: false,
-      detached: process.platform !== "win32",
-      env: validationEnvironment(this.#options.environment),
-    });
+    const child = this.createValidationProcess(
+      command,
+      workspace.workspacePath,
+    );
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let timedOut = false;
@@ -263,6 +271,34 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
             stdout: sanitize(bounded(stdout, this.#options.maxOutputBytes)),
             stderr: sanitize(bounded(stderr, this.#options.maxOutputBytes)),
           };
+          let integrityFailure: WorkspaceValidationError | undefined;
+          if (
+            this.#options.verifyCandidateCommit &&
+            candidateCommitSha !== undefined
+          ) {
+            try {
+              if (
+                (await readHead(workspace.workspacePath)) !== candidateCommitSha
+              ) {
+                integrityFailure = new WorkspaceValidationError(
+                  validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+                  "Validation changed the candidate commit",
+                  output,
+                );
+              }
+            } catch (error) {
+              integrityFailure = new WorkspaceValidationError(
+                validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+                "Unable to verify the candidate commit after validation",
+                output,
+                { cause: error },
+              );
+            }
+          }
+          if (integrityFailure !== undefined) {
+            reject(integrityFailure);
+            return;
+          }
           if (timedOut)
             return reject(
               new WorkspaceValidationError(
@@ -272,20 +308,6 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
               ),
             );
           if (exitCode !== 0) {
-            if (
-              this.#options.verifyCandidateCommit &&
-              candidateCommitSha !== undefined &&
-              (await readHead(workspace.workspacePath)) !== candidateCommitSha
-            ) {
-              reject(
-                new WorkspaceValidationError(
-                  validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
-                  "Validation changed the candidate commit",
-                  output,
-                ),
-              );
-              return;
-            }
             reject(
               new WorkspaceValidationError(
                 validationErrorCodes.VALIDATION_FAILED,
@@ -310,5 +332,60 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       );
     }
     return result;
+  }
+
+  private createValidationProcess(
+    command: readonly [string, ...string[]],
+    workspacePath: string,
+  ) {
+    if (this.#options.spawnImplementation !== undefined) {
+      return this.#options.spawnImplementation(command[0], command.slice(1), {
+        cwd: workspacePath,
+        shell: false,
+        detached: process.platform !== "win32",
+        env: validationEnvironment(this.#options.environment),
+      });
+    }
+    if (this.#options.container === undefined) {
+      throw new Error("container validation boundary is not configured");
+    }
+    return spawn(
+      this.#options.container.executablePath,
+      [
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--user",
+        this.#options.container.user ?? "1000:1000",
+        ...(this.#options.container.memoryLimit === undefined
+          ? []
+          : ["--memory", this.#options.container.memoryLimit]),
+        ...(this.#options.container.pidsLimit === undefined
+          ? []
+          : ["--pids-limit", String(this.#options.container.pidsLimit)]),
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,noexec",
+        "--mount",
+        `type=bind,src=${workspacePath},dst=/workspace,rw`,
+        "--workdir",
+        "/workspace",
+        "--env",
+        "CI=true",
+        this.#options.container.image,
+        ...command,
+      ],
+      {
+        cwd: workspacePath,
+        shell: false,
+        detached: process.platform !== "win32",
+      },
+    );
   }
 }
