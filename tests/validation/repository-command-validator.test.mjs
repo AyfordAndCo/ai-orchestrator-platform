@@ -44,6 +44,12 @@ test("runs an explicitly declared command and returns bounded output", async () 
   assert.equal(result.stdout, "validated");
 });
 
+test("detects dotnet validation for a solution-only repository", async () => {
+  const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
+  await writeFile(join(root, "service.sln"), "");
+  assert.deepEqual(await detectValidationCommand(root), ["dotnet", "test"]);
+});
+
 test("rejects a failing validation command", async () => {
   const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
   const validator = new RepositoryCommandValidator({

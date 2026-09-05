@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import {
@@ -54,12 +54,29 @@ export async function detectValidationCommand(
         ? ["yarn", "validate"]
         : [selected, "run", "validate"];
   } catch (error) {
+    if (
+      (await existsWithExtension(workspacePath, ".sln")) ||
+      (await existsWithExtension(workspacePath, ".csproj"))
+    ) {
+      return ["dotnet", "test"];
+    }
     throw new WorkspaceValidationError(
       validationErrorCodes.VALIDATION_LAUNCH_FAILED,
       "Unable to detect the repository validation command",
       {},
       { cause: error },
     );
+  }
+}
+
+async function existsWithExtension(
+  path: string,
+  extension: string,
+): Promise<boolean> {
+  try {
+    return (await readdir(path)).some((entry) => entry.endsWith(extension));
+  } catch {
+    return false;
   }
 }
 
