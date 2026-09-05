@@ -12,20 +12,9 @@ import {
 } from "../../dist/packages/domain/src/workspace/index.js";
 
 import { GitWorkspaceProvisioner } from "../../dist/packages/integrations/src/git/git-workspace-provisioner.js";
+import { git, sanitizedGitEnv } from "../support/git-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
-
-async function git(repositoryPath, ...args) {
-  const { stdout } = await execFileAsync(
-    "git",
-    ["-C", repositoryPath, ...args],
-    {
-      encoding: "utf8",
-    },
-  );
-
-  return stdout.trim();
-}
 
 async function pathExists(path) {
   try {
@@ -45,11 +34,17 @@ async function createTestRepository() {
   const sourcePath = join(rootPath, "source");
   const workspacePath = join(rootPath, "workspace");
 
-  await execFileAsync("git", ["init", "--bare", remotePath]);
+  await execFileAsync("git", ["init", "--bare", remotePath], {
+    cwd: rootPath,
+    env: sanitizedGitEnv(),
+  });
 
   await mkdir(sourcePath);
 
-  await execFileAsync("git", ["init", sourcePath]);
+  await execFileAsync("git", ["init", sourcePath], {
+    cwd: rootPath,
+    env: sanitizedGitEnv(),
+  });
 
   await git(sourcePath, "config", "user.name", "Workspace Test");
   await git(
