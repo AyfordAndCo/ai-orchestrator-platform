@@ -228,10 +228,17 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       this.#options.command ??
       (await detectValidationCommand(workspace.workspacePath));
     const started = Date.now();
-    const child = this.createValidationProcess(
-      command,
-      workspace.workspacePath,
-    );
+    let child;
+    try {
+      child = this.createValidationProcess(command, workspace.workspacePath);
+    } catch (error) {
+      throw new WorkspaceValidationError(
+        validationErrorCodes.VALIDATION_LAUNCH_FAILED,
+        "A restricted validation boundary is required",
+        {},
+        { cause: error },
+      );
+    }
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let timedOut = false;
