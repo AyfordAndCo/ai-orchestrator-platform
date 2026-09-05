@@ -15,6 +15,18 @@ function normalizePath(value) {
   return value.trim().toLowerCase().replace(/\\/g, "/");
 }
 
+/**
+ * A clean baseline (via sanitizedGitEnv()) plus only the specific variables
+ * under test. Building proofs this way — rather than letting a call inherit
+ * the full ambient process.env — keeps them from failing for an unrelated
+ * reason if some other GIT_* variable happens to already be set wherever
+ * the suite runs (e.g. GIT_COMMON_DIR from being invoked inside a linked
+ * worktree).
+ */
+function envWithOnly(overrides) {
+  return { ...sanitizedGitEnv(), ...overrides };
+}
+
 async function withPoisonedGitDir(poisonGitDir, poisonWorkTree, action) {
   const originalGitDir = process.env.GIT_DIR;
   const originalWorkTree = process.env.GIT_WORK_TREE;
@@ -30,7 +42,7 @@ async function withPoisonedGitDir(poisonGitDir, poisonWorkTree, action) {
   }
 }
 
-test("an ambient GIT_DIR/GIT_WORK_TREE actually redirects an unsanitized git call (proves the vulnerability is real)", async (t) => {
+test("a GIT_DIR/GIT_WORK_TREE override actually redirects an unsanitized git call (proves the vulnerability is real)", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "git-fixture-sanitization-"));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -45,20 +57,26 @@ test("an ambient GIT_DIR/GIT_WORK_TREE actually redirects an unsanitized git cal
     env: sanitizedGitEnv(),
   });
 
-  await withPoisonedGitDir(poisonGitDir, poisonWorkTree, async () => {
-    // Deliberately unsanitized: inherits the poisoned ambient env, matching
-    // what the buggy fixtures did before this fix.
-    const { stdout } = await execFileAsync(
-      "git",
-      ["rev-parse", "--show-toplevel"],
-      { cwd: target, encoding: "utf8" },
-    );
-    assert.equal(
-      normalizePath(stdout),
-      normalizePath(poisonWorkTree),
-      "an unsanitized call was redirected onto the poisoned work tree instead of `target`",
-    );
-  });
+  // Deliberately unsanitized in the one respect being tested: a clean base
+  // plus only GIT_DIR/GIT_WORK_TREE, matching what the buggy fixtures did
+  // when those two leaked in from the parent process.
+  const { stdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    {
+      cwd: target,
+      encoding: "utf8",
+      env: envWithOnly({
+        GIT_DIR: poisonGitDir,
+        GIT_WORK_TREE: poisonWorkTree,
+      }),
+    },
+  );
+  assert.equal(
+    normalizePath(stdout),
+    normalizePath(poisonWorkTree),
+    "an unsanitized call was redirected onto the poisoned work tree instead of `target`",
+  );
 });
 
 test("sanitizedGitEnv prevents an ambient GIT_DIR/GIT_WORK_TREE from redirecting fixture git commands", async (t) => {
@@ -180,27 +198,36 @@ test("sanitizedGitEnv always forces git config isolation, even when the invoker 
   }
 });
 
-test("sanitizedGitEnv strips runtime config injection (GIT_CONFIG_COUNT/KEY_n/VALUE_n), which bypasses GIT_CONFIG_GLOBAL entirely", async (t) => {
+test("a GIT_CONFIG_COUNT/KEY_0/VALUE_0 override actually injects config that bypasses GIT_CONFIG_GLOBAL (proves the vulnerability is real), and sanitizedGitEnv strips a real ambient leak of it", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "git-fixture-sanitization-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await git(root, "init", "-b", "main");
 
+  const injectionOverrides = {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.hooksPath",
+    GIT_CONFIG_VALUE_0: join(root, "attacker-hooks"),
+  };
+
+  // Confirm the injection actually works against a clean-but-for-this-one-
+  // override environment, so this half of the test proves something real
+  // rather than asserting against a no-op, and can't fail for an unrelated
+  // ambient-noise reason.
+  const injected = await execFileAsync(
+    "git",
+    ["config", "--get", "core.hooksPath"],
+    { cwd: root, encoding: "utf8", env: envWithOnly(injectionOverrides) },
+  );
+  assert.equal(injected.stdout.trim(), join(root, "attacker-hooks"));
+
+  // Now simulate a real ambient leak of those same variables (as opposed to
+  // the isolated construction above) and confirm sanitizedGitEnv() strips
+  // it rather than merely never having been given it.
   const originalCount = process.env.GIT_CONFIG_COUNT;
   const originalKey0 = process.env.GIT_CONFIG_KEY_0;
   const originalValue0 = process.env.GIT_CONFIG_VALUE_0;
-  process.env.GIT_CONFIG_COUNT = "1";
-  process.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
-  process.env.GIT_CONFIG_VALUE_0 = join(root, "attacker-hooks");
+  Object.assign(process.env, injectionOverrides);
   try {
-    // Confirm the injection actually works when NOT sanitized, so the test
-    // proves something real rather than asserting against a no-op.
-    const injected = await execFileAsync(
-      "git",
-      ["config", "--get", "core.hooksPath"],
-      { cwd: root, encoding: "utf8" },
-    );
-    assert.equal(injected.stdout.trim(), join(root, "attacker-hooks"));
-
     await assert.rejects(
       execFileAsync("git", ["config", "--get", "core.hooksPath"], {
         cwd: root,
