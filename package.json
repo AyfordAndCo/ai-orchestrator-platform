@@ -13,7 +13,8 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "architecture:check": "node scripts/check-architecture.mjs",
-    "test": "pnpm build && node --test tests/foundation.test.mjs tests/agent-execution/*.test.mjs tests/architecture/*.test.mjs tests/git/*.test.mjs tests/github/*.test.mjs tests/provider/*.test.mjs tests/review/*.test.mjs tests/workspace/*.test.mjs tests/run/*.test.mjs tests/stack/*.test.mjs tests/validation/*.test.mjs",
+    "start:dashboard": "pnpm build && node dist/apps/orchestrator-api/src/server.js",
+    "test": "pnpm build && node --test tests/foundation.test.mjs tests/agent-execution/*.test.mjs tests/architecture/*.test.mjs tests/dashboard/*.test.mjs tests/git/*.test.mjs tests/github/*.test.mjs tests/provider/*.test.mjs tests/pull-request-actions/*.test.mjs tests/review/*.test.mjs tests/workspace/*.test.mjs tests/run/*.test.mjs tests/stack/*.test.mjs tests/validation/*.test.mjs",
     "build": "tsc -p tsconfig.build.json",
     "validate": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm architecture:check && pnpm test && pnpm build"
   },
