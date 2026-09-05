@@ -92,7 +92,7 @@ for (const candidate of [modelName, ...fallbackModels]) {
     lastError = error;
     const message = error instanceof Error ? error.message : String(error);
     const transient =
-      /HTTP (404|429|500|502|503|504)|quota|rate.?limit|high demand/i.test(
+      /AbortError|aborted|timeout|HTTP (404|429|500|502|503|504)|quota|rate.?limit|high demand/i.test(
         message,
       );
     if (!transient || candidate === fallbackModels.at(-1)) throw error;
