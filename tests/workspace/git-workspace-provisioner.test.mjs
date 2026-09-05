@@ -46,6 +46,13 @@ async function createTestRepository() {
     env: sanitizedGitEnv(),
   });
 
+  // Set locally (not globally) so this setting also applies to worktrees
+  // production code creates from this repo, which spawn git without the
+  // sanitized fixture environment: without it, a real GIT_CONFIG_GLOBAL
+  // that enables core.autocrlf can convert a checked-out file's line
+  // endings while the commit made through the sanitized fixture env does
+  // not, producing a spurious working-tree modification.
+  await git(sourcePath, "config", "core.autocrlf", "false");
   await git(sourcePath, "config", "user.name", "Workspace Test");
   await git(
     sourcePath,

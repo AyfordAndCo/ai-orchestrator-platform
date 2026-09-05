@@ -121,23 +121,61 @@ test("sanitizedGitEnv prevents an ambient GIT_DIR/GIT_WORK_TREE from redirecting
   });
 });
 
-test("sanitizedGitEnv strips every GIT_* key but preserves everything else", () => {
+test("sanitizedGitEnv strips location-redirect GIT_* keys but preserves everything else", () => {
   const originalGitDir = process.env.GIT_DIR;
   process.env.GIT_DIR = "/should/not/appear";
   try {
     const env = sanitizedGitEnv();
     assert.equal(env.GIT_DIR, undefined);
-    for (const key of Object.keys(env)) {
-      assert.ok(
-        !key.startsWith("GIT_"),
-        `unexpected GIT_* key survived: ${key}`,
-      );
-    }
     if (process.env.PATH !== undefined) {
       assert.equal(env.PATH, process.env.PATH);
     }
   } finally {
     if (originalGitDir === undefined) delete process.env.GIT_DIR;
     else process.env.GIT_DIR = originalGitDir;
+  }
+});
+
+test("sanitizedGitEnv strips location-redirect keys regardless of case (Windows env vars are case-insensitive)", () => {
+  const originalMixedCase = process.env.Git_Work_Tree;
+  const originalLowerCase = process.env.git_dir;
+  process.env.Git_Work_Tree = "/should/not/appear";
+  process.env.git_dir = "/should/not/appear/either";
+  try {
+    const env = sanitizedGitEnv();
+    for (const key of Object.keys(env)) {
+      assert.notEqual(
+        key.toUpperCase(),
+        "GIT_WORK_TREE",
+        `a differently-cased GIT_WORK_TREE survived as ${key}`,
+      );
+      assert.notEqual(
+        key.toUpperCase(),
+        "GIT_DIR",
+        `a differently-cased GIT_DIR survived as ${key}`,
+      );
+    }
+  } finally {
+    if (originalMixedCase === undefined) delete process.env.Git_Work_Tree;
+    else process.env.Git_Work_Tree = originalMixedCase;
+    if (originalLowerCase === undefined) delete process.env.git_dir;
+    else process.env.git_dir = originalLowerCase;
+  }
+});
+
+test("sanitizedGitEnv always forces git config isolation, even when the invoker didn't set it", () => {
+  const originalNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+  const originalGlobal = process.env.GIT_CONFIG_GLOBAL;
+  delete process.env.GIT_CONFIG_NOSYSTEM;
+  delete process.env.GIT_CONFIG_GLOBAL;
+  try {
+    const env = sanitizedGitEnv();
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
+    assert.equal(env.GIT_CONFIG_GLOBAL, "/dev/null");
+  } finally {
+    if (originalNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+    else process.env.GIT_CONFIG_NOSYSTEM = originalNoSystem;
+    if (originalGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = originalGlobal;
   }
 });
