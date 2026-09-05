@@ -103,20 +103,28 @@ export async function detectValidationCommand(
   }
 }
 
-async function findDotnetProject(root: string): Promise<string | undefined> {
+async function findDotnetProject(
+  root: string,
+  depth = 0,
+  budget = { remaining: 10_000 },
+): Promise<string | undefined> {
+  if (depth > 32 || budget.remaining <= 0) return undefined;
   try {
     const entries = await readdir(root, { withFileTypes: true });
+    budget.remaining -= entries.length;
+    const solution = entries.find(
+      (entry) => entry.isFile() && entry.name.endsWith(".sln"),
+    );
+    if (solution !== undefined)
+      return relative(root, join(root, solution.name));
     for (const entry of entries) {
       if (entry.name === ".git" || entry.name === "node_modules") continue;
       const path = join(root, entry.name);
-      if (
-        entry.isFile() &&
-        (entry.name.endsWith(".sln") || entry.name.endsWith(".csproj"))
-      ) {
+      if (entry.isFile() && entry.name.endsWith(".csproj")) {
         return relative(root, path);
       }
       if (entry.isDirectory()) {
-        const nested = await findDotnetProject(path);
+        const nested = await findDotnetProject(path, depth + 1, budget);
         if (nested !== undefined) return join(entry.name, nested);
       }
     }
@@ -216,13 +224,20 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
     }
     if (
       this.#options.verifyCandidateCommit &&
-      candidateCommitSha !== undefined &&
-      (await readHead(workspace.workspacePath)) !== candidateCommitSha
+      candidateCommitSha !== undefined
     ) {
-      throw new WorkspaceValidationError(
-        validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
-        "Workspace HEAD does not match the immutable candidate commit",
-      );
+      try {
+        if ((await readHead(workspace.workspacePath)) !== candidateCommitSha) {
+          throw new Error("workspace HEAD mismatch");
+        }
+      } catch (error) {
+        throw new WorkspaceValidationError(
+          validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+          "Unable to verify the immutable candidate commit before validation",
+          {},
+          { cause: error },
+        );
+      }
     }
     const command =
       this.#options.command ??

@@ -61,6 +61,7 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
     if (apiKey?.trim()) headers.set("authorization", `Bearer ${apiKey}`);
 
     let response: Response;
+    let body: string;
     for (let attempt = 0; ; attempt += 1) {
       const controller = new AbortController();
       const timeout = setTimeout(
@@ -77,6 +78,7 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
             messages: [{ role: "user", content: request.instruction }],
           }),
         });
+        body = await response.text();
       } finally {
         clearTimeout(timeout);
       }
@@ -91,7 +93,6 @@ export class OpenAiCompatibleAgentProvider implements AgentProvider {
       );
     }
 
-    const body = await response.text();
     if (!response.ok) {
       throw new Error(
         `${this.name} request failed with HTTP ${response.status}: ${bounded(body)}`,
