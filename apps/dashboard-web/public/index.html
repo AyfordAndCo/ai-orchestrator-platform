@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Engineering Control Center</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script type="module" src="/assets/dashboard.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#pull-requests">Skip to pull requests</a>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Engineering Control Center home">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <span><strong>Engineering</strong><small>Control Center</small></span>
+        </a>
+        <nav aria-label="Primary">
+          <a class="nav-item active" href="/" aria-current="page"
+            >Action Required</a
+          >
+          <span class="nav-item muted">Pull Requests</span>
+          <span class="nav-item muted">Repositories</span>
+          <span class="nav-item muted">Agent Runs</span>
+          <span class="nav-item muted">Activity</span>
+        </nav>
+        <p class="sidebar-note">
+          Live GitHub state, normalized by the orchestrator.
+        </p>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Operations / Pull requests</p>
+            <h1>What needs your attention?</h1>
+            <p class="lede">
+              One view of blocked, failing, and review-ready work across
+              AyfordAndCo.
+            </p>
+          </div>
+          <button id="refresh-button" class="refresh-button" type="button">
+            <span aria-hidden="true">↻</span> Refresh
+          </button>
+        </header>
+
+        <p id="load-status" class="status-message" aria-live="polite"></p>
+
+        <section class="summary-grid" aria-label="Pull request summary">
+          <article class="summary-card attention">
+            <span>Needs my action</span><strong id="summary-action">—</strong>
+          </article>
+          <article class="summary-card">
+            <span>CI failed</span><strong id="summary-failed">—</strong>
+          </article>
+          <article class="summary-card">
+            <span>Waiting review</span><strong id="summary-review">—</strong>
+          </article>
+          <article class="summary-card">
+            <span>Open pull requests</span><strong id="summary-total">—</strong>
+          </article>
+        </section>
+
+        <section
+          class="work-panel"
+          id="pull-requests"
+          aria-labelledby="work-title"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Priority queue</p>
+              <h2 id="work-title">Action required</h2>
+            </div>
+            <span id="result-count" class="result-count"></span>
+          </div>
+          <div class="filters" aria-label="Pull request filters">
+            <div>
+              <label for="repository-filter">Repository</label>
+              <select id="repository-filter">
+                <option value="">All repositories</option>
+              </select>
+            </div>
+            <div>
+              <label for="action-filter">Required action</label>
+              <select id="action-filter">
+                <option value="ACTION_REQUIRED">Action required</option>
+                <option value="">All states</option>
+              </select>
+            </div>
+            <p>Sorted by priority, then oldest update.</p>
+          </div>
+          <div id="pr-list" class="pr-list" aria-busy="true"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="pr-detail" aria-labelledby="detail-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">Pull request detail</p>
+          <h2 id="detail-title"></h2>
+        </div>
+        <button
+          id="detail-close"
+          class="icon-button"
+          type="button"
+          aria-label="Close details"
+        >
+          ×
+        </button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+  </body>
+</html>

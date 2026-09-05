@@ -163,3 +163,20 @@ The implementation order and decisions for this work are recorded in
 - [x] Configure conditional human review policy for sensitive changes.
 - [ ] Add end-to-end lifecycle tests for single and stacked PRs.
 - [ ] Run independent security and workflow review before enabling hosted execution.
+
+## ALL-23 — Dashboard MVP: Pull Request Action Center
+
+- [x] Define the normalized pull request action model.
+- [x] Implement deterministic required-action classification.
+- [x] Discover active AyfordAndCo repositories and open pull requests.
+- [x] Normalize CI, reviews, human approval, mergeability, update state, and priority.
+- [x] Expose `GET /pull-requests/actions` from the orchestrator API.
+- [x] Keep GitHub credentials and requests on the server.
+- [x] Serve the dashboard and API from the same secured local origin.
+- [x] Add summary cards, repository/action filters, priority sorting, and manual refresh.
+- [x] Add GitHub PR/check links and an accessible detail dialog.
+- [x] Add loading, empty, and safe error states.
+- [x] Document local configuration and operation.
+- [x] Add domain, integration, API, server, dashboard-model, and accessibility tests.
+- [ ] Complete full repository validation.
+- [ ] Complete independent review and resolve findings.
