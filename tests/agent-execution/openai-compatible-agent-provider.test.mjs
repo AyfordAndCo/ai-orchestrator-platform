@@ -80,3 +80,20 @@ test("maps provider HTTP failures and malformed responses", async () => {
   });
   await assert.rejects(() => malformed.execute(request()), /message content/);
 });
+
+test("aborts a request that exceeds the configured timeout", async () => {
+  const provider = new OpenAiCompatibleAgentProvider({
+    name: "openrouter",
+    endpoint: "https://openrouter.ai/api/v1",
+    requestTimeoutMs: 10,
+    fetchImplementation: async (_url, options) =>
+      await new Promise((_, reject) => {
+        options.signal.addEventListener(
+          "abort",
+          () => reject(new Error("aborted")),
+          { once: true },
+        );
+      }),
+  });
+  await assert.rejects(() => provider.execute(request()), /aborted/);
+});
