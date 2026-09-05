@@ -17,6 +17,24 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const ALLOWED_MANAGERS = new Set(["pnpm", "npm", "yarn", "bun"]);
 const execFileAsync = promisify(execFile);
 
+export type ValidationRuntime = "npm" | "pnpm" | "yarn" | "bun" | "dotnet";
+
+/**
+ * Runtimes not covered by the default (Node/npm/pnpm/yarn) validation
+ * container image. Each must have a pinned image configured explicitly via
+ * `runtimeImages` before a repository using that runtime can be validated.
+ */
+const RUNTIMES_REQUIRING_DEDICATED_IMAGE = new Set<ValidationRuntime>([
+  "bun",
+  "dotnet",
+]);
+
+interface DetectedValidationCommand {
+  readonly command: readonly [string, ...string[]];
+  /** `undefined` when the command was an explicit manual override rather than auto-detected. */
+  readonly runtime: ValidationRuntime | undefined;
+}
+
 function validationEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv {
@@ -55,19 +73,33 @@ export interface RepositoryCommandValidatorOptions {
   readonly command?: readonly [string, ...string[]];
   readonly verifyCandidateCommit?: boolean;
   readonly container?: ValidationContainerOptions;
+  /**
+   * Pinned images for runtimes not covered by `container.image` (the
+   * default Node/npm/pnpm/yarn image). A repository detected as one of
+   * `RUNTIMES_REQUIRING_DEDICATED_IMAGE` fails closed with
+   * `VALIDATION_LAUNCH_FAILED` if its runtime has no entry here, rather
+   * than silently running its command inside an incompatible image.
+   */
+  readonly runtimeImages?: Readonly<Partial<Record<ValidationRuntime, string>>>;
   /** Test seam; production callers must configure the restricted container boundary. */
   readonly spawnImplementation?: typeof spawn;
 }
 
 export async function detectValidationCommand(
   workspacePath: string,
-): Promise<readonly [string, ...string[]]> {
+): Promise<DetectedValidationCommand> {
   try {
     const packageJson = JSON.parse(
       await readFile(`${workspacePath}/package.json`, "utf8"),
     ) as { packageManager?: unknown; scripts?: Record<string, unknown> };
-    if (typeof packageJson.scripts?.validate !== "string") {
-      throw new Error("package.json does not define scripts.validate");
+    const validateScript = packageJson.scripts?.validate;
+    if (
+      typeof validateScript !== "string" ||
+      validateScript.trim().length === 0
+    ) {
+      throw new Error(
+        "package.json does not define a nonblank scripts.validate",
+      );
     }
     const manager =
       typeof packageJson.packageManager === "string"
@@ -84,15 +116,18 @@ export async function detectValidationCommand(
                 (await exists(`${workspacePath}/bun.lock`))
               ? "bun"
               : "npm";
-    return selected === "npm"
-      ? ["npm", "run", "validate"]
-      : selected === "yarn"
-        ? ["yarn", "validate"]
-        : [selected, "run", "validate"];
+    const runtime = selected as ValidationRuntime;
+    const command: readonly [string, ...string[]] =
+      selected === "npm"
+        ? ["npm", "run", "validate"]
+        : selected === "yarn"
+          ? ["yarn", "validate"]
+          : [selected, "run", "validate"];
+    return { command, runtime };
   } catch (error) {
     const dotnetProject = await findDotnetProject(workspacePath);
     if (dotnetProject !== undefined) {
-      return ["dotnet", "test", dotnetProject];
+      return { command: ["dotnet", "test", dotnetProject], runtime: "dotnet" };
     }
     throw new WorkspaceValidationError(
       validationErrorCodes.VALIDATION_LAUNCH_FAILED,
@@ -103,28 +138,50 @@ export async function detectValidationCommand(
   }
 }
 
-async function findDotnetProject(
+async function findDotnetProject(root: string): Promise<string | undefined> {
+  const budget = { remaining: 10_000 };
+  const solution = await findFirstMatch(
+    root,
+    (name) => name.endsWith(".sln"),
+    0,
+    budget,
+  );
+  if (solution !== undefined) return solution;
+  return findFirstMatch(root, (name) => name.endsWith(".csproj"), 0, budget);
+}
+
+/**
+ * Performs a complete recursive search of `root` for the first file whose
+ * name satisfies `matches`, only then returning. Callers that need
+ * solution-before-project priority must run two full, separate searches
+ * (see `findDotnetProject`) rather than interleaving both predicates in one
+ * pass: a partial, interleaved search can accept a project from one subtree
+ * before a solution in a later sibling subtree has even been visited.
+ */
+async function findFirstMatch(
   root: string,
-  depth = 0,
-  budget = { remaining: 10_000 },
+  matches: (name: string) => boolean,
+  depth: number,
+  budget: { remaining: number },
 ): Promise<string | undefined> {
   if (depth > 32 || budget.remaining <= 0) return undefined;
   try {
     const entries = await readdir(root, { withFileTypes: true });
     budget.remaining -= entries.length;
-    const solution = entries.find(
-      (entry) => entry.isFile() && entry.name.endsWith(".sln"),
-    );
-    if (solution !== undefined)
-      return relative(root, join(root, solution.name));
+    for (const entry of entries) {
+      if (entry.isFile() && matches(entry.name)) {
+        return relative(root, join(root, entry.name));
+      }
+    }
     for (const entry of entries) {
       if (entry.name === ".git" || entry.name === "node_modules") continue;
-      const path = join(root, entry.name);
-      if (entry.isFile() && entry.name.endsWith(".csproj")) {
-        return relative(root, path);
-      }
       if (entry.isDirectory()) {
-        const nested = await findDotnetProject(path, depth + 1, budget);
+        const nested = await findFirstMatch(
+          join(root, entry.name),
+          matches,
+          depth + 1,
+          budget,
+        );
         if (nested !== undefined) return join(entry.name, nested);
       }
     }
@@ -192,15 +249,49 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       verifyCandidateCommit: options.verifyCandidateCommit ?? true,
     };
-    if (this.#options.timeoutMs <= 0 || this.#options.maxOutputBytes <= 0) {
+    if (
+      !Number.isInteger(this.#options.timeoutMs) ||
+      this.#options.timeoutMs <= 0 ||
+      !Number.isInteger(this.#options.maxOutputBytes) ||
+      this.#options.maxOutputBytes <= 0
+    ) {
       throw new RangeError("timeoutMs and maxOutputBytes must be positive");
     }
+    const digestPattern = /@sha256:[0-9a-f]{64}$/i;
     if (
       this.#options.container !== undefined &&
-      !/@sha256:[0-9a-f]{64}$/i.test(this.#options.container.image)
+      !digestPattern.test(this.#options.container.image)
     ) {
       throw new RangeError("container image must be pinned by a sha256 digest");
     }
+    for (const image of Object.values(this.#options.runtimeImages ?? {})) {
+      if (!digestPattern.test(image)) {
+        throw new RangeError(
+          "runtime container images must be pinned by a sha256 digest",
+        );
+      }
+    }
+  }
+
+  private resolveContainerImage(
+    runtime: ValidationRuntime | undefined,
+  ): string {
+    if (runtime !== undefined) {
+      const runtimeImage = this.#options.runtimeImages?.[runtime];
+      if (runtimeImage !== undefined) return runtimeImage;
+      if (RUNTIMES_REQUIRING_DEDICATED_IMAGE.has(runtime)) {
+        throw new WorkspaceValidationError(
+          validationErrorCodes.VALIDATION_LAUNCH_FAILED,
+          `No pinned validation container image is configured for runtime "${runtime}"; ` +
+            `configure options.runtimeImages.${runtime}.`,
+          {},
+        );
+      }
+    }
+    if (this.#options.container === undefined) {
+      throw new Error("container validation boundary is not configured");
+    }
+    return this.#options.container.image;
   }
 
   async validate(
@@ -239,13 +330,19 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
         );
       }
     }
-    const command =
-      this.#options.command ??
-      (await detectValidationCommand(workspace.workspacePath));
+    const detected: DetectedValidationCommand =
+      this.#options.command !== undefined
+        ? { command: this.#options.command, runtime: undefined }
+        : await detectValidationCommand(workspace.workspacePath);
+    const command = detected.command;
     const started = Date.now();
     let child;
     try {
-      child = this.createValidationProcess(command, workspace.workspacePath);
+      child = this.createValidationProcess(
+        command,
+        workspace.workspacePath,
+        detected.runtime,
+      );
     } catch (error) {
       throw new WorkspaceValidationError(
         validationErrorCodes.VALIDATION_LAUNCH_FAILED,
@@ -359,6 +456,7 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
   private createValidationProcess(
     command: readonly [string, ...string[]],
     workspacePath: string,
+    runtime: ValidationRuntime | undefined,
   ) {
     if (this.#options.spawnImplementation !== undefined) {
       return this.#options.spawnImplementation(command[0], command.slice(1), {
@@ -371,6 +469,7 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
     if (this.#options.container === undefined) {
       throw new Error("container validation boundary is not configured");
     }
+    const image = this.resolveContainerImage(runtime);
     return spawn(
       this.#options.container.executablePath,
       [
@@ -400,7 +499,7 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
         "/workspace",
         "--env",
         "CI=true",
-        this.#options.container.image,
+        image,
         ...command,
       ],
       {
