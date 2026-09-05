@@ -198,3 +198,55 @@ test("maps failed checks, change requests, conflicts, and wait labels", async ()
   assert.equal(item.waitingOnAgent, true);
   assert.equal(item.priority, "CRITICAL");
 });
+
+test("treats completed successful checks as passing even when the legacy combined status is pending with no statuses", async () => {
+  const fetchImplementation = async (url) => {
+    const { pathname, search } = new URL(url);
+    const path = `${pathname}${search}`;
+    if (path.startsWith("/orgs/")) {
+      return jsonResponse([
+        { full_name: "AyfordAndCo/repo", archived: false, disabled: false },
+      ]);
+    }
+    if (path.endsWith("/pulls?state=open&per_page=100")) {
+      return jsonResponse([
+        {
+          number: 3,
+          title: "Actions-only repo",
+          html_url: "https://github.com/AyfordAndCo/repo/pull/3",
+          draft: false,
+          updated_at: "2026-09-05T10:00:00Z",
+          user: { login: "agent" },
+          head: { sha: "ghi", ref: "agent/actions-only" },
+          labels: [],
+          body: null,
+        },
+      ]);
+    }
+    if (path.endsWith("/pulls/3")) {
+      return jsonResponse({ mergeable: true, mergeable_state: "clean" });
+    }
+    if (path.includes("/check-runs")) {
+      return jsonResponse({
+        check_runs: [
+          { name: "validate", status: "completed", conclusion: "success" },
+        ],
+      });
+    }
+    // GitHub's combined-status endpoint reports "pending" with an empty
+    // statuses array for any repository that has never posted a legacy
+    // commit status, regardless of check-run outcome.
+    if (path.endsWith("/status?per_page=100"))
+      return jsonResponse({ state: "pending", statuses: [] });
+    if (path.endsWith("/reviews?per_page=100")) return jsonResponse([]);
+    throw new Error(`Unexpected request ${path}`);
+  };
+
+  const [item] = await new GitHubPullRequestActionSource({
+    organization: "AyfordAndCo",
+    token: "token",
+    fetchImplementation,
+  }).listOpenPullRequests();
+
+  assert.equal(item.ciState, "PASSING");
+});

@@ -52,6 +52,18 @@ test("reports the highest-priority blocker deterministically", () => {
   );
 });
 
+test("a merge conflict is actionable even while CI is still running", () => {
+  assert.equal(
+    classifyPullRequestAction({
+      ...baseline,
+      ciState: "RUNNING",
+      mergeable: false,
+      mergeConflict: true,
+    }),
+    "MERGE_CONFLICT",
+  );
+});
+
 test("unknown CI cannot be considered ready to merge", () => {
   assert.equal(
     classifyPullRequestAction({ ...baseline, ciState: "UNKNOWN" }),

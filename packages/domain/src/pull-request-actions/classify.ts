@@ -9,8 +9,8 @@ export function classifyPullRequestAction(
   if (input.draft) return "NO_ACTION";
   if (input.changesRequested) return "CHANGES_REQUESTED";
   if (input.ciState === "FAILING") return "CI_FAILED";
-  if (input.ciState === "RUNNING") return "CI_RUNNING";
   if (input.mergeConflict) return "MERGE_CONFLICT";
+  if (input.ciState === "RUNNING") return "CI_RUNNING";
   if (input.updateRequired) return "UPDATE_REQUIRED";
   if (input.waitingOnAgent) return "WAITING_ON_AGENT";
   if (input.waitingOnExternal) return "WAITING_ON_EXTERNAL";

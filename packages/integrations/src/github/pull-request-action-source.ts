@@ -15,6 +15,7 @@ const failedConclusions = new Set([
   "timed_out",
 ]);
 const knownMergeableStates = new Set(["clean", "has_hooks", "unstable"]);
+const maxConcurrentPullRequestNormalizations = 20;
 
 interface RepositoryResponse {
   readonly full_name: string;
@@ -108,7 +109,7 @@ function ciState(
     checks.check_runs.some(
       ({ status: checkStatus }) => checkStatus !== "completed",
     ) ||
-    status.state === "pending"
+    (status.state === "pending" && status.statuses.length > 0)
   ) {
     return { state: "RUNNING", failedChecks: [] };
   }
@@ -140,6 +141,27 @@ function priorityFrom(labels: readonly string[]): PullRequestPriority {
   if (normalized.has("priority:low") || normalized.has("low priority"))
     return "LOW";
   return "NORMAL";
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const item = items[currentIndex];
+      if (item === undefined) continue;
+      results[currentIndex] = await mapper(item);
+    }
+  }
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 function issueFrom(
@@ -322,13 +344,14 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
         ),
       })),
     );
-    const normalized = await Promise.all(
-      pullRequestsByRepository.flatMap(({ repository, pullRequests }) =>
-        pullRequests.map((pullRequest) =>
-          this.#normalize(repository, pullRequest),
-        ),
-      ),
+    const pullRequestsToNormalize = pullRequestsByRepository.flatMap(
+      ({ repository, pullRequests }) =>
+        pullRequests.map((pullRequest) => ({ repository, pullRequest })),
     );
-    return normalized;
+    return mapWithConcurrency(
+      pullRequestsToNormalize,
+      maxConcurrentPullRequestNormalizations,
+      ({ repository, pullRequest }) => this.#normalize(repository, pullRequest),
+    );
   }
 }
