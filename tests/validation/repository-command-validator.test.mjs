@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { join } from "node:path";
@@ -46,8 +46,13 @@ test("runs an explicitly declared command and returns bounded output", async () 
 
 test("detects dotnet validation for a solution-only repository", async () => {
   const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
-  await writeFile(join(root, "service.sln"), "");
-  assert.deepEqual(await detectValidationCommand(root), ["dotnet", "test"]);
+  await mkdir(join(root, "src", "App"), { recursive: true });
+  await writeFile(join(root, "src", "App", "service.csproj"), "");
+  assert.deepEqual(await detectValidationCommand(root), [
+    "dotnet",
+    "test",
+    join("src", "App", "service.csproj"),
+  ]);
 });
 
 test("rejects a failing validation command", async () => {

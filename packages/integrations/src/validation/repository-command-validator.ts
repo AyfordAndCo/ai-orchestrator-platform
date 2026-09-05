@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { lstat, readFile, readdir } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -85,11 +86,9 @@ export async function detectValidationCommand(
         ? ["yarn", "validate"]
         : [selected, "run", "validate"];
   } catch (error) {
-    if (
-      (await existsWithExtension(workspacePath, ".sln")) ||
-      (await existsWithExtension(workspacePath, ".csproj"))
-    ) {
-      return ["dotnet", "test"];
+    const dotnetProject = await findDotnetProject(workspacePath);
+    if (dotnetProject !== undefined) {
+      return ["dotnet", "test", dotnetProject];
     }
     throw new WorkspaceValidationError(
       validationErrorCodes.VALIDATION_LAUNCH_FAILED,
@@ -100,15 +99,32 @@ export async function detectValidationCommand(
   }
 }
 
-async function existsWithExtension(
-  path: string,
-  extension: string,
-): Promise<boolean> {
+async function findDotnetProject(root: string): Promise<string | undefined> {
   try {
-    return (await readdir(path)).some((entry) => entry.endsWith(extension));
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      const path = join(root, entry.name);
+      if (
+        entry.isFile() &&
+        (entry.name.endsWith(".sln") || entry.name.endsWith(".csproj"))
+      ) {
+        return relative(root, path);
+      }
+      if (entry.isDirectory()) {
+        const nested = await findDotnetProject(path);
+        if (nested !== undefined) return join(entry.name, nested);
+      }
+    }
+    return undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+function appendBounded(current: Buffer, chunk: Buffer, max: number): Buffer {
+  if (current.length >= max) return current;
+  return Buffer.concat([current, chunk.subarray(0, max - current.length)]);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -208,20 +224,14 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       detached: process.platform !== "win32",
       env: validationEnvironment(this.#options.environment),
     });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
+    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let timedOut = false;
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout = Buffer.concat([stdout, chunk]).subarray(
-        0,
-        this.#options.maxOutputBytes,
-      );
+      stdout = appendBounded(stdout, chunk, this.#options.maxOutputBytes);
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr = Buffer.concat([stderr, chunk]).subarray(
-        0,
-        this.#options.maxOutputBytes,
-      );
+      stderr = appendBounded(stderr, chunk, this.#options.maxOutputBytes);
     });
     let killTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
