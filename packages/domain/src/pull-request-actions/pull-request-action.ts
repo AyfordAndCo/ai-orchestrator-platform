@@ -22,6 +22,7 @@ export interface PullRequestActionInput {
   readonly changesRequested: boolean;
   readonly humanApprovalPresent: boolean;
   readonly mergeable: boolean;
+  readonly mergeConflict: boolean;
   readonly updateRequired: boolean;
   readonly waitingOnAgent: boolean;
   readonly waitingOnExternal: boolean;
@@ -74,6 +75,9 @@ export interface PullRequestActionCollection {
   readonly summary: {
     readonly total: number;
     readonly actionRequired: number;
+    readonly ciFailed: number;
+    readonly ciRunning: number;
+    readonly waitingReview: number;
     readonly byAction: Readonly<Record<PullRequestRequiredAction, number>>;
   };
   readonly generatedAt: string;

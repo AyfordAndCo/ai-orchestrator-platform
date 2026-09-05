@@ -66,6 +66,10 @@ export async function listPullRequestActions(
       actionRequired: items.filter(
         ({ requiredAction }) => !passiveActions.has(requiredAction),
       ).length,
+      ciFailed: items.filter(({ ci }) => ci.state === "FAILING").length,
+      ciRunning: items.filter(({ ci }) => ci.state === "RUNNING").length,
+      waitingReview: items.filter(({ review }) => !review.humanApprovalPresent)
+        .length,
       byAction,
     },
     generatedAt: clock().toISOString(),

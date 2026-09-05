@@ -12,6 +12,7 @@ const baseline = Object.freeze({
   changesRequested: false,
   humanApprovalPresent: true,
   mergeable: true,
+  mergeConflict: false,
   updateRequired: false,
   waitingOnAgent: false,
   waitingOnExternal: false,
@@ -22,7 +23,7 @@ test("classifies every supported pull request action", () => {
     [{ ...baseline, changesRequested: true }, "CHANGES_REQUESTED"],
     [{ ...baseline, ciState: "FAILING" }, "CI_FAILED"],
     [{ ...baseline, ciState: "RUNNING" }, "CI_RUNNING"],
-    [{ ...baseline, mergeable: false }, "MERGE_CONFLICT"],
+    [{ ...baseline, mergeable: false, mergeConflict: true }, "MERGE_CONFLICT"],
     [{ ...baseline, updateRequired: true }, "UPDATE_REQUIRED"],
     [{ ...baseline, waitingOnAgent: true }, "WAITING_ON_AGENT"],
     [{ ...baseline, waitingOnExternal: true }, "WAITING_ON_EXTERNAL"],
@@ -44,6 +45,7 @@ test("reports the highest-priority blocker deterministically", () => {
       ciState: "FAILING",
       changesRequested: true,
       mergeable: false,
+      mergeConflict: true,
       humanApprovalPresent: false,
     }),
     "CHANGES_REQUESTED",
@@ -54,5 +56,17 @@ test("unknown CI cannot be considered ready to merge", () => {
   assert.equal(
     classifyPullRequestAction({ ...baseline, ciState: "UNKNOWN" }),
     "NO_ACTION",
+  );
+});
+
+test("an unknown merge state waits safely instead of reporting a conflict or readiness", () => {
+  assert.equal(
+    classifyPullRequestAction({
+      ...baseline,
+      mergeable: false,
+      mergeConflict: false,
+      waitingOnExternal: true,
+    }),
+    "WAITING_ON_EXTERNAL",
   );
 });

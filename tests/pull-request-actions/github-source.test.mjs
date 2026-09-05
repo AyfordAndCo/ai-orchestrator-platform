@@ -6,10 +6,10 @@ import { URL } from "node:url";
 
 import { GitHubPullRequestActionSource } from "../../dist/packages/integrations/src/github/pull-request-action-source.js";
 
-function jsonResponse(value) {
+function jsonResponse(value, headers = {}) {
   return new Response(JSON.stringify(value), {
     status: 200,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
   });
 }
 
@@ -53,7 +53,7 @@ test("discovers active organization repositories and normalizes open PR state", 
       },
     ],
     [
-      "/repos/AyfordAndCo/platform/commits/abc/status",
+      "/repos/AyfordAndCo/platform/commits/abc/status?per_page=100",
       { state: "success", statuses: [] },
     ],
     [
@@ -61,8 +61,19 @@ test("discovers active organization repositories and normalizes open PR state", 
       [
         {
           id: 1,
-          state: "APPROVED",
+          state: "COMMENTED",
           submitted_at: "2026-09-05T09:00:00Z",
+          user: { login: "allan", type: "User" },
+        },
+      ],
+    ],
+    [
+      "/repos/AyfordAndCo/platform/pulls/12/reviews?per_page=100&page=2",
+      [
+        {
+          id: 2,
+          state: "APPROVED",
+          submitted_at: "2026-09-05T09:30:00Z",
           user: { login: "allan", type: "User" },
         },
       ],
@@ -77,7 +88,15 @@ test("discovers active organization repositories and normalizes open PR state", 
       undefined,
       `Unexpected request ${parsed.pathname}${parsed.search}`,
     );
-    return jsonResponse(value);
+    return jsonResponse(
+      value,
+      parsed.pathname.endsWith("/pulls/12/reviews") &&
+        parsed.search === "?per_page=100"
+        ? {
+            link: '<https://api.github.com/repos/AyfordAndCo/platform/pulls/12/reviews?per_page=100&page=2>; rel="next"',
+          }
+        : {},
+    );
   };
   const source = new GitHubPullRequestActionSource({
     organization: "AyfordAndCo",
@@ -92,6 +111,13 @@ test("discovers active organization repositories and normalizes open PR state", 
   assert.equal(items[0].ciState, "PASSING");
   assert.equal(items[0].humanApprovalPresent, true);
   assert.equal(items[0].priority, "HIGH");
+  assert.ok(
+    requests.some(
+      ({ path }) =>
+        path ===
+        "/repos/AyfordAndCo/platform/pulls/12/reviews?per_page=100&page=2",
+    ),
+  );
   assert.ok(
     requests.every(
       ({ init }) => init.headers.Authorization === "Bearer test-token",
@@ -144,7 +170,7 @@ test("maps failed checks, change requests, conflicts, and wait labels", async ()
         ],
       });
     }
-    if (path.endsWith("/status"))
+    if (path.endsWith("/status?per_page=100"))
       return jsonResponse({ state: "failure", statuses: [] });
     if (path.endsWith("/reviews?per_page=100")) {
       return jsonResponse([

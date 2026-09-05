@@ -239,11 +239,9 @@ async function refresh(): Promise<void> {
     elements.actionSummary.textContent = String(
       collection.summary.actionRequired,
     );
-    elements.failedSummary.textContent = String(
-      collection.summary.byAction.CI_FAILED,
-    );
+    elements.failedSummary.textContent = String(collection.summary.ciFailed);
     elements.reviewSummary.textContent = String(
-      collection.summary.byAction.HUMAN_REVIEW_REQUIRED,
+      collection.summary.waitingReview,
     );
     elements.totalSummary.textContent = String(collection.summary.total);
     populateFilters(collection.items);

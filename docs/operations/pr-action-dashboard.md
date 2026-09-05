@@ -43,6 +43,9 @@ data beyond a trusted local environment.
     "summary": {
       "total": 0,
       "actionRequired": 0,
+      "ciFailed": 0,
+      "ciRunning": 0,
+      "waitingReview": 0,
       "byAction": {}
     },
     "generatedAt": "2026-09-05T12:00:00.000Z"
@@ -51,7 +54,11 @@ data beyond a trusted local environment.
 ```
 
 GitHub failures return a stable `502` response without upstream diagnostics or
-credentials. API responses are not cached.
+credentials. The MVP fails closed if any repository cannot be read rather than
+silently showing incomplete organization state. API responses are not cached.
+
+Collection requests follow GitHub pagination links and reject any pagination
+target outside `api.github.com` before forwarding the bearer token.
 
 ## Classification inputs
 

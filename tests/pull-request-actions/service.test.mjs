@@ -21,6 +21,7 @@ test("normalizes source pull requests and counts actions", async () => {
           humanApprovalPresent: false,
           changesRequested: false,
           mergeable: true,
+          mergeConflict: false,
           updateRequired: false,
           waitingOnAgent: false,
           waitingOnExternal: false,
@@ -36,5 +37,8 @@ test("normalizes source pull requests and counts actions", async () => {
   assert.equal(result.items[0].requiredAction, "HUMAN_REVIEW_REQUIRED");
   assert.equal(result.summary.total, 1);
   assert.equal(result.summary.actionRequired, 1);
+  assert.equal(result.summary.ciFailed, 0);
+  assert.equal(result.summary.ciRunning, 0);
+  assert.equal(result.summary.waitingReview, 1);
   assert.equal(result.summary.byAction.HUMAN_REVIEW_REQUIRED, 1);
 });

@@ -33,6 +33,9 @@ test("serves the normalized collection from GET /pull-requests/actions", async (
       summary: {
         total: 0,
         actionRequired: 0,
+        ciFailed: 0,
+        ciRunning: 0,
+        waitingReview: 0,
         byAction: {
           HUMAN_REVIEW_REQUIRED: 0,
           CHANGES_REQUESTED: 0,

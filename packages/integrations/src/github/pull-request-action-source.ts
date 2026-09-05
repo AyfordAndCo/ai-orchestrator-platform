@@ -14,6 +14,7 @@ const failedConclusions = new Set([
   "startup_failure",
   "timed_out",
 ]);
+const knownMergeableStates = new Set(["clean", "has_hooks", "unstable"]);
 
 interface RepositoryResponse {
   readonly full_name: string;
@@ -59,6 +60,11 @@ interface ReviewResponse {
   readonly state: string;
   readonly submitted_at: string | null;
   readonly user: { readonly login: string; readonly type: string } | null;
+}
+
+interface GitHubPage<T> {
+  readonly data: T;
+  readonly next?: string;
 }
 
 export interface GitHubPullRequestActionSourceOptions {
@@ -162,8 +168,12 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
     this.#fetch = options.fetchImplementation ?? fetch;
   }
 
-  async #get<T>(path: string): Promise<T> {
-    const response = await this.#fetch(`${apiBaseUrl}${path}`, {
+  async #getPage<T>(target: string): Promise<GitHubPage<T>> {
+    const url = new URL(target, apiBaseUrl);
+    if (url.origin !== apiBaseUrl) {
+      throw new Error("GitHub pagination returned an untrusted origin");
+    }
+    const response = await this.#fetch(url, {
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${this.#token}`,
@@ -173,7 +183,61 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
     if (!response.ok) {
       throw new Error(`GitHub request failed with status ${response.status}`);
     }
-    return (await response.json()) as T;
+    const linkHeader = response.headers.get("link");
+    const nextMatch =
+      linkHeader === null ? null : /<([^>]+)>;\s*rel="next"/.exec(linkHeader);
+    return {
+      data: (await response.json()) as T,
+      ...(nextMatch?.[1] === undefined ? {} : { next: nextMatch[1] }),
+    };
+  }
+
+  async #get<T>(path: string): Promise<T> {
+    return (await this.#getPage<T>(path)).data;
+  }
+
+  async #getAll<T>(path: string): Promise<readonly T[]> {
+    const items: T[] = [];
+    const visited = new Set<string>();
+    let next: string | undefined = path;
+    while (next !== undefined) {
+      if (visited.has(next)) throw new Error("GitHub pagination loop detected");
+      visited.add(next);
+      const page: GitHubPage<readonly T[]> = await this.#getPage(next);
+      items.push(...page.data);
+      next = page.next;
+    }
+    return items;
+  }
+
+  async #getAllChecks(path: string): Promise<CheckRunsResponse> {
+    const checkRuns: Array<CheckRunsResponse["check_runs"][number]> = [];
+    const visited = new Set<string>();
+    let next: string | undefined = path;
+    while (next !== undefined) {
+      if (visited.has(next)) throw new Error("GitHub pagination loop detected");
+      visited.add(next);
+      const page: GitHubPage<CheckRunsResponse> = await this.#getPage(next);
+      checkRuns.push(...page.data.check_runs);
+      next = page.next;
+    }
+    return { check_runs: checkRuns };
+  }
+
+  async #getAllStatuses(path: string): Promise<CommitStatusResponse> {
+    const statuses: Array<CommitStatusResponse["statuses"][number]> = [];
+    const visited = new Set<string>();
+    let state = "pending";
+    let next: string | undefined = path;
+    while (next !== undefined) {
+      if (visited.has(next)) throw new Error("GitHub pagination loop detected");
+      visited.add(next);
+      const page: GitHubPage<CommitStatusResponse> = await this.#getPage(next);
+      state = page.data.state;
+      statuses.push(...page.data.statuses);
+      next = page.next;
+    }
+    return { state, statuses };
   }
 
   async #normalize(
@@ -185,13 +249,13 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
       this.#get<PullRequestDetailResponse>(
         `${repositoryPath}/pulls/${pullRequest.number}`,
       ),
-      this.#get<CheckRunsResponse>(
+      this.#getAllChecks(
         `${repositoryPath}/commits/${pullRequest.head.sha}/check-runs?per_page=100`,
       ),
-      this.#get<CommitStatusResponse>(
-        `${repositoryPath}/commits/${pullRequest.head.sha}/status`,
+      this.#getAllStatuses(
+        `${repositoryPath}/commits/${pullRequest.head.sha}/status?per_page=100`,
       ),
-      this.#get<readonly ReviewResponse[]>(
+      this.#getAll<ReviewResponse>(
         `${repositoryPath}/pulls/${pullRequest.number}/reviews?per_page=100`,
       ),
     ]);
@@ -202,6 +266,13 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
       ({ state }) => state === "APPROVED",
     );
     const issue = issueFrom(pullRequest);
+    const mergeConflict =
+      detail.mergeable === false || detail.mergeable_state === "dirty";
+    const mergeable =
+      detail.mergeable === true &&
+      (knownMergeableStates.has(detail.mergeable_state) ||
+        detail.mergeable_state === "behind");
+    const unknownMergeState = !mergeConflict && !mergeable;
 
     return {
       repository,
@@ -222,22 +293,22 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
       changesRequested: currentReviews.some(
         ({ state }) => state === "CHANGES_REQUESTED",
       ),
-      mergeable:
-        detail.mergeable !== false && detail.mergeable_state !== "dirty",
+      mergeable,
+      mergeConflict,
       updateRequired: detail.mergeable_state === "behind",
       waitingOnAgent: labels.some(
         (label) => label.toLowerCase() === "waiting-on-agent",
       ),
-      waitingOnExternal: labels.some(
-        (label) => label.toLowerCase() === "waiting-on-external",
-      ),
+      waitingOnExternal:
+        unknownMergeState ||
+        labels.some((label) => label.toLowerCase() === "waiting-on-external"),
       priority: priorityFrom(labels),
       updatedAt: pullRequest.updated_at,
     };
   }
 
   async listOpenPullRequests(): Promise<readonly PullRequestActionCandidate[]> {
-    const repositories = await this.#get<readonly RepositoryResponse[]>(
+    const repositories = await this.#getAll<RepositoryResponse>(
       `/orgs/${encodeURIComponent(this.#organization)}/repos?type=all&per_page=100`,
     );
     const activeRepositories = repositories.filter(
@@ -246,7 +317,7 @@ export class GitHubPullRequestActionSource implements PullRequestActionSource {
     const pullRequestsByRepository = await Promise.all(
       activeRepositories.map(async ({ full_name }) => ({
         repository: full_name,
-        pullRequests: await this.#get<readonly PullRequestResponse[]>(
+        pullRequests: await this.#getAll<PullRequestResponse>(
           `/repos/${full_name}/pulls?state=open&per_page=100`,
         ),
       })),
