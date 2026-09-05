@@ -69,10 +69,14 @@ async function createFixture(validationSource) {
 
   await writeFile(join(workspacePath, "validate.mjs"), validationSource);
 
-  const codexPath = join(binPath, "codex");
+  const codexScriptPath = join(binPath, "codex.mjs");
+  const codexPath =
+    process.platform === "win32"
+      ? join(binPath, "codex.cmd")
+      : join(binPath, "codex");
 
   await writeFile(
-    codexPath,
+    codexScriptPath,
     `#!${process.execPath}
 import {
   writeFile,
@@ -114,7 +118,72 @@ if (
 `,
   );
 
-  await chmod(codexPath, 0o755);
+  if (process.platform === "win32") {
+    await writeFile(
+      codexPath,
+      `@echo off\r\n"${process.execPath}" "%~dp0codex.mjs" %*\r\n`,
+    );
+  } else {
+    await writeFile(
+      codexPath,
+      `#!${process.execPath}\nimport "./codex.mjs";\n`,
+    );
+    await chmod(codexPath, 0o755);
+  }
+
+  const pnpmScriptPath = join(binPath, "pnpm.mjs");
+  const pnpmPath =
+    process.platform === "win32"
+      ? join(binPath, "pnpm.cmd")
+      : join(binPath, "pnpm");
+
+  await writeFile(
+    pnpmScriptPath,
+    `#!${process.execPath}
+import {
+  spawnSync,
+} from "node:child_process";
+import {
+  join,
+} from "node:path";
+
+const command =
+  process.argv[2];
+
+if (command !== "validate") {
+  process.stderr.write(
+    "unexpected pnpm command",
+  );
+
+  process.exit(1);
+}
+
+const result = spawnSync(
+  process.execPath,
+  [
+    join(process.cwd(), "validate.mjs"),
+  ],
+  {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  },
+);
+
+process.exit(
+  result.status ?? 1,
+);
+`,
+  );
+
+  if (process.platform === "win32") {
+    await writeFile(
+      pnpmPath,
+      `@echo off\r\n"${process.execPath}" "%~dp0pnpm.mjs" %*\r\n`,
+    );
+  } else {
+    await writeFile(pnpmPath, `#!${process.execPath}\nimport "./pnpm.mjs";\n`);
+    await chmod(pnpmPath, 0o755);
+  }
 
   return {
     rootPath,
@@ -123,13 +192,15 @@ if (
     binPath,
     homePath,
     codexPath,
+    pnpmPath,
+    pnpmScriptPath,
   };
 }
 
-function createWorkspaceRequest(workspacePath) {
+function createWorkspaceRequest(workspacePath, repositoryPath = "/source") {
   return {
     issueId: "ALL-315",
-    repositoryPath: "/source",
+    repositoryPath,
     baseBranch: "develop",
     featureBranch: "allan/all-315-worker-test",
     workspacePath,
@@ -180,6 +251,7 @@ async function withCodexEnvironment(fixture, action) {
   process.env.HOME = fixture.homePath;
 
   process.env.PATH = [fixture.binPath, original.PATH].join(delimiter);
+  process.env.npm_execpath = fixture.pnpmScriptPath;
 
   process.env.USER = "all-315-worker-test";
 
@@ -232,6 +304,7 @@ process.stdout.write(
       executePnpmRun(
         {
           runId: "all-315-real-codex-success",
+          repository: "allan/repo",
           issueTitle: "Real Codex success",
           instruction,
           workspace: createWorkspaceRequest(fixture.workspacePath),
@@ -239,6 +312,7 @@ process.stdout.write(
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -296,12 +370,14 @@ process.exit(9);
       executePnpmRun(
         {
           runId: "all-315-real-validation-failure",
+          repository: "allan/repo",
           instruction: "Implement test change.",
           workspace: createWorkspaceRequest(fixture.workspacePath),
         },
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -354,12 +430,14 @@ await writeFile(
       executePnpmRun(
         {
           runId: "all-315-real-provider-failure",
+          repository: "allan/repo",
           instruction: "TEST_PROVIDER_FAILURE",
           workspace: createWorkspaceRequest(fixture.workspacePath),
         },
         {
           workspaceProvisioner: createProvisioner(),
           gitPublisher,
+          validation: { verifyCandidateCommit: false },
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
@@ -396,6 +474,66 @@ await writeFile(
       ),
       "TEST_PROVIDER_FAILURE",
     );
+  } finally {
+    await rm(fixture.rootPath, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test("threads GitHub publication and observation options into the worker boundary", async () => {
+  const fixture = await createFixture(`
+process.stdout.write("worker-validation-ok");
+`);
+
+  try {
+    const result = await withCodexEnvironment(fixture, () =>
+      executePnpmRun(
+        {
+          runId: "all-315-github-config",
+          repository: "allan/repo",
+          instruction: "Implement test change.",
+          workspace: createWorkspaceRequest(fixture.workspacePath),
+        },
+        {
+          workspaceProvisioner: createProvisioner(),
+          gitPublisher,
+          validation: { verifyCandidateCommit: false },
+          agentExecution: {
+            executablePath: fixture.codexPath,
+            allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+          },
+          pullRequestPublisher: {
+            async publish(request) {
+              return {
+                number: 17,
+                url: "https://github.com/allan/repo/pull/17",
+                repository: request.repository,
+                headBranch: request.headBranch,
+                baseBranch: request.baseBranch,
+                headCommitSha: request.headCommitSha,
+                created: true,
+              };
+            },
+          },
+          ciObserver: {
+            async observe() {
+              return {
+                state: "success",
+                checks: [
+                  {
+                    name: "build",
+                    state: "SUCCESS",
+                  },
+                ],
+              };
+            },
+          },
+        },
+      ),
+    );
+    assert.equal(result.run.state, runStates.COMPLETED);
   } finally {
     await rm(fixture.rootPath, {
       recursive: true,

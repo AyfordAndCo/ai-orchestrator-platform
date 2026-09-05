@@ -14,12 +14,13 @@ import {
 
 const request = {
   runId: "run-001",
+  repository: "allan/repo",
   issueTitle: "Test worker lifecycle",
   instruction: "Implement the approved issue specification.",
   workspace: {
     issueId: "ALL-312",
     repositoryPath: "/source",
-    baseBranch: "develop",
+    baseBranch: "main",
     featureBranch: "allan/all-312-test",
     workspacePath: "/workspace/ALL-312",
   },
@@ -181,10 +182,6 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.EXECUTING,
-        to: runStates.VALIDATING,
-      },
-      {
-        from: runStates.VALIDATING,
         to: runStates.INSPECTING_CHANGES,
       },
       {
@@ -193,6 +190,10 @@ test("executes the successful initial run lifecycle", async () => {
       },
       {
         from: runStates.COMMITTING,
+        to: runStates.VALIDATING,
+      },
+      {
+        from: runStates.VALIDATING,
         to: runStates.PUSHING,
       },
       {
@@ -287,6 +288,8 @@ test("fails the run when validation fails", async () => {
     new Date("2026-08-08T09:03:00.000Z"),
     new Date("2026-08-08T09:04:00.000Z"),
     new Date("2026-08-08T09:05:00.000Z"),
+    new Date("2026-08-08T09:06:00.000Z"),
+    new Date("2026-08-08T09:07:00.000Z"),
   ];
 
   const workspaceProvisioner = {
@@ -341,6 +344,14 @@ test("fails the run when validation fails", async () => {
       },
       {
         from: runStates.EXECUTING,
+        to: runStates.INSPECTING_CHANGES,
+      },
+      {
+        from: runStates.INSPECTING_CHANGES,
+        to: runStates.COMMITTING,
+      },
+      {
+        from: runStates.COMMITTING,
         to: runStates.VALIDATING,
       },
       {
@@ -530,7 +541,7 @@ test("Git inspection failure gates commit and push while retaining workspace met
     stderr: "provider-neutral diagnostic",
   });
   assert.deepEqual(transitionPairs(result).slice(-2), [
-    [runStates.VALIDATING, runStates.INSPECTING_CHANGES],
+    [runStates.EXECUTING, runStates.INSPECTING_CHANGES],
     [runStates.INSPECTING_CHANGES, runStates.FAILED],
   ]);
 });
@@ -593,7 +604,164 @@ test("Git push failure never completes and retains workspace metadata", async ()
     false,
   );
   assert.deepEqual(transitionPairs(result).slice(-2), [
-    [runStates.COMMITTING, runStates.PUSHING],
+    [runStates.VALIDATING, runStates.PUSHING],
     [runStates.PUSHING, runStates.FAILED],
   ]);
+});
+
+test("publishes a pull request and waits for CI when GitHub boundaries are configured", async () => {
+  const timestamps = [
+    new Date("2026-08-08T09:00:00.000Z"),
+    new Date("2026-08-08T09:01:00.000Z"),
+    new Date("2026-08-08T09:02:00.000Z"),
+    new Date("2026-08-08T09:03:00.000Z"),
+    new Date("2026-08-08T09:04:00.000Z"),
+    new Date("2026-08-08T09:05:00.000Z"),
+    new Date("2026-08-08T09:06:00.000Z"),
+    new Date("2026-08-08T09:07:00.000Z"),
+    new Date("2026-08-08T09:08:00.000Z"),
+    new Date("2026-08-08T09:09:00.000Z"),
+    new Date("2026-08-08T09:10:00.000Z"),
+    new Date("2026-08-08T09:11:00.000Z"),
+  ];
+
+  let publicationRequest;
+  let observationRequest;
+
+  const pullRequestPublisher = {
+    async publish(value) {
+      publicationRequest = value;
+      return {
+        number: 17,
+        url: "https://github.com/allan/repo/pull/17",
+        repository: "allan/repo",
+        headBranch: request.workspace.featureBranch,
+        baseBranch: "main",
+        headCommitSha: "a".repeat(40),
+        created: true,
+      };
+    },
+  };
+
+  const ciObserver = {
+    async observe(value) {
+      observationRequest = value;
+      return {
+        state: "success",
+        checks: [],
+      };
+    },
+  };
+
+  const workspaceProvisioner = {
+    async create() {
+      return workspace;
+    },
+  };
+
+  const result = await executeRun(request, {
+    workspaceProvisioner,
+    agentExecutor,
+    validator: { async validate() {} },
+    gitPublisher,
+    pullRequestPublisher,
+    ciObserver,
+    now: createClock(timestamps),
+  });
+
+  assert.equal(result.run.state, runStates.COMPLETED);
+  assert.equal(publicationRequest.repository, request.repository);
+  assert.equal(publicationRequest.baseBranch, "main");
+  assert.equal(observationRequest.repository, request.repository);
+  assert.deepEqual(
+    result.run.transitions.map(({ from, to }) => ({ from, to })),
+    [
+      {
+        from: runStates.QUEUED,
+        to: runStates.PREPARING_WORKSPACE,
+      },
+      {
+        from: runStates.PREPARING_WORKSPACE,
+        to: runStates.READY,
+      },
+      {
+        from: runStates.READY,
+        to: runStates.EXECUTING,
+      },
+      {
+        from: runStates.EXECUTING,
+        to: runStates.INSPECTING_CHANGES,
+      },
+      {
+        from: runStates.INSPECTING_CHANGES,
+        to: runStates.COMMITTING,
+      },
+      {
+        from: runStates.COMMITTING,
+        to: runStates.VALIDATING,
+      },
+      {
+        from: runStates.VALIDATING,
+        to: runStates.PUSHING,
+      },
+      {
+        from: runStates.PUSHING,
+        to: runStates.CREATING_PR,
+      },
+      {
+        from: runStates.CREATING_PR,
+        to: runStates.WAITING_FOR_CI,
+      },
+      {
+        from: runStates.WAITING_FOR_CI,
+        to: runStates.CI_PASSED,
+      },
+      {
+        from: runStates.CI_PASSED,
+        to: runStates.COMPLETED,
+      },
+    ],
+  );
+});
+
+test("fails before publishing when a pull request has no CI observer", async () => {
+  const timestamps = Array.from(
+    { length: 12 },
+    (_, index) =>
+      new Date(`2026-08-08T10:${String(index).padStart(2, "0")}:00.000Z`),
+  );
+
+  let publishCalled = false;
+  const result = await executeRun(request, {
+    workspaceProvisioner: {
+      async create() {
+        return workspace;
+      },
+    },
+    agentExecutor,
+    validator: { async validate() {} },
+    gitPublisher,
+    pullRequestPublisher: {
+      async publish() {
+        publishCalled = true;
+        return {
+          number: 17,
+          url: "https://github.com/allan/repo/pull/17",
+          repository: request.repository,
+          headBranch: request.workspace.featureBranch,
+          baseBranch: "main",
+          headCommitSha: "a".repeat(40),
+          created: true,
+        };
+      },
+    },
+    now: createClock(timestamps),
+  });
+
+  assert.equal(result.run.state, runStates.FAILED);
+  assert.equal(publishCalled, false);
+  assert.deepEqual(result.run.failure, {
+    code: executionFailureCodes.CI_OBSERVATION_FAILED,
+    message: "CI observer is required before publishing a pull request",
+  });
 });

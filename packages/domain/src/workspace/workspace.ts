@@ -1,5 +1,8 @@
 export interface CreateWorkspaceRequest {
   issueId: string;
+  readonly stackId?: string;
+  readonly stackOrder?: number;
+  readonly parentBranch?: string;
   repositoryPath: string;
   baseBranch: string;
   featureBranch: string;
@@ -8,6 +11,9 @@ export interface CreateWorkspaceRequest {
 
 export interface Workspace {
   issueId: string;
+  readonly stackId?: string;
+  readonly stackOrder?: number;
+  readonly parentBranch?: string;
   repositoryPath: string;
   workspacePath: string;
   baseBranch: string;

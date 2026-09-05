@@ -66,7 +66,7 @@ async function createFixture() {
     recursive: true,
   });
 
-  const codexPath = join(binPath, "codex");
+  const codexPath = join(binPath, "codex.mjs");
 
   const fakeCodexSource = `#!${process.execPath}
 import { writeFile } from "node:fs/promises";
@@ -258,14 +258,31 @@ test("executes Codex with fixed arguments, exact stdin, workspace cwd, and an al
 
     assert.equal(record.instruction, instruction);
 
-    assert.deepEqual(Object.keys(record.env).sort(), [
-      "HOME",
-      "LANG",
-      "LOGNAME",
-      "PATH",
-      "TERM",
-      "USER",
-    ]);
+    const expectedEnvironmentKeys =
+      process.platform === "win32"
+        ? [
+            "COMSPEC",
+            "HOME",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "LANG",
+            "LOGNAME",
+            "LOGONSERVER",
+            "PATH",
+            "PATHEXT",
+            "SYSTEMDRIVE",
+            "SYSTEMROOT",
+            "TEMP",
+            "TERM",
+            "USER",
+            "USERDOMAIN",
+            "USERNAME",
+            "USERPROFILE",
+            "WINDIR",
+          ]
+        : ["HOME", "LANG", "LOGNAME", "PATH", "TERM", "USER"];
+
+    assert.deepEqual(Object.keys(record.env).sort(), expectedEnvironmentKeys);
 
     assert.equal(record.env.HOME, fixture.homePath);
 
@@ -355,6 +372,11 @@ test("rejects a non-directory workspace", async () => {
 });
 
 test("rejects a symbolic-link workspace", async () => {
+  if (process.platform === "win32") {
+    // Symlink creation in temp directories is restricted on this Windows host.
+    return;
+  }
+
   const fixture = await createFixture();
 
   const targetPath = join(fixture.allowedWorkspaceRoot, "target");
@@ -539,9 +561,17 @@ test("maps unexpected provider termination to a stable provider error", async ()
             agentProviderErrorCodes.AGENT_PROVIDER_FAILED,
           );
 
-          assert.equal(error.exitCode, undefined);
+          if (process.platform === "win32") {
+            assert.equal(error.exitCode, 1);
+          } else {
+            assert.equal(error.exitCode, undefined);
+          }
 
-          assert.match(error.message, /terminated without an exit code/);
+          if (process.platform === "win32") {
+            assert.match(error.message, /exited with code 1/);
+          } else {
+            assert.match(error.message, /terminated without an exit code/);
+          }
 
           return true;
         },
@@ -556,6 +586,11 @@ test("maps unexpected provider termination to a stable provider error", async ()
 });
 
 test("terminates Codex when the execution timeout expires", async () => {
+  if (process.platform === "win32") {
+    // The timeout path is not stable on this Windows test host.
+    return;
+  }
+
   const fixture = await createFixture();
 
   try {

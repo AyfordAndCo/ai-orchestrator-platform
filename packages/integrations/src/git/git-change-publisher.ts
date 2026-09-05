@@ -23,12 +23,13 @@ import {
   type GitPushRequest,
   type GitPublisher,
 } from "../../../domain/src/git/index.js";
+import { trunkBranchName } from "../../../domain/src/stack/index.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 32_768;
 const TIMEOUT_MS = 30_000;
 const REMOTE_NAME = "origin";
-const unsafeBranches = new Set(["develop", "main"]);
+const unsafeBranches = new Set(["develop", trunkBranchName]);
 const forbiddenDirectories = new Set([
   "node_modules",
   ".next",
@@ -536,7 +537,7 @@ export class GitChangePublisher implements GitPublisher {
     await checkedGit(
       this.#gitExecutablePath,
       root,
-      ["push", REMOTE_NAME, `refs/heads/${branch}:refs/heads/${branch}`],
+      ["push", REMOTE_NAME, `${request.commit.commitSha}:refs/heads/${branch}`],
       "GIT_PUSH_FAILED",
       "Unable to push reviewed feature branch",
     );
