@@ -15,6 +15,37 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const ALLOWED_MANAGERS = new Set(["pnpm", "npm", "yarn", "bun"]);
 const execFileAsync = promisify(execFile);
 
+function validationEnvironment(
+  environment: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  const source = environment ?? process.env;
+  const allowed = [
+    "CI",
+    "COREPACK_HOME",
+    "HOME",
+    "LANG",
+    "LOGNAME",
+    "PATH",
+    "PNPM_HOME",
+    "TMPDIR",
+    "USER",
+  ];
+  return Object.fromEntries(
+    allowed.flatMap((name) =>
+      source[name] === undefined ? [] : [[name, source[name] as string]],
+    ),
+  );
+}
+
+function sanitize(value: string): string {
+  return value
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|token|password|passwd|secret|credential)s?\s*[=:]\s*)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    );
+}
+
 export interface RepositoryCommandValidatorOptions {
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
@@ -98,6 +129,21 @@ async function readHead(workspacePath: string): Promise<string> {
   return stdout.trim();
 }
 
+function terminate(
+  child: ReturnType<typeof spawn>,
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  child.kill(signal);
+}
+
 function bounded(value: Buffer, max: number): string {
   return value.subarray(0, max).toString("utf8");
 }
@@ -159,7 +205,8 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
     const child = spawn(command[0], command.slice(1), {
       cwd: workspace.workspacePath,
       shell: false,
-      env: this.#options.environment ?? process.env,
+      detached: process.platform !== "win32",
+      env: validationEnvironment(this.#options.environment),
     });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -176,14 +223,17 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
         this.#options.maxOutputBytes,
       );
     });
+    let killTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      terminate(child, "SIGTERM");
+      killTimer = setTimeout(() => terminate(child, "SIGKILL"), 1_000);
     }, this.#options.timeoutMs);
     const result = await new Promise<WorkspaceValidationResult>(
       (resolve, reject) => {
         child.once("error", (cause) => {
           clearTimeout(timer);
+          if (killTimer !== undefined) clearTimeout(killTimer);
           reject(
             new WorkspaceValidationError(
               validationErrorCodes.VALIDATION_LAUNCH_FAILED,
@@ -196,11 +246,12 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
             ),
           );
         });
-        child.once("close", (exitCode) => {
+        child.once("close", async (exitCode) => {
           clearTimeout(timer);
+          if (killTimer !== undefined) clearTimeout(killTimer);
           const output = {
-            stdout: bounded(stdout, this.#options.maxOutputBytes),
-            stderr: bounded(stderr, this.#options.maxOutputBytes),
+            stdout: sanitize(bounded(stdout, this.#options.maxOutputBytes)),
+            stderr: sanitize(bounded(stderr, this.#options.maxOutputBytes)),
           };
           if (timedOut)
             return reject(
@@ -210,14 +261,30 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
                 output,
               ),
             );
-          if (exitCode !== 0)
-            return reject(
+          if (exitCode !== 0) {
+            if (
+              this.#options.verifyCandidateCommit &&
+              candidateCommitSha !== undefined &&
+              (await readHead(workspace.workspacePath)) !== candidateCommitSha
+            ) {
+              reject(
+                new WorkspaceValidationError(
+                  validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
+                  "Validation changed the candidate commit",
+                  output,
+                ),
+              );
+              return;
+            }
+            reject(
               new WorkspaceValidationError(
                 validationErrorCodes.VALIDATION_FAILED,
                 `Repository validation exited with code ${String(exitCode)}`,
                 { ...output, ...(exitCode === null ? {} : { exitCode }) },
               ),
             );
+            return;
+          }
           resolve({ exitCode: 0, ...output, durationMs: Date.now() - started });
         });
       },
