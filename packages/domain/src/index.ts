@@ -2,6 +2,7 @@ export * from "./agent-execution/index.js";
 export * from "./git/index.js";
 export * from "./github/index.js";
 export * from "./provider/index.js";
+export * from "./pull-request-actions/index.js";
 export const platformName = "AI Orchestrator Platform";
 
 export * from "./run/index.js";
