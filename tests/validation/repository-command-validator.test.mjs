@@ -46,6 +46,17 @@ test("runs an explicitly declared command and returns bounded output", async () 
   assert.equal(result.stdout, "validated");
 });
 
+test("refuses host execution without an explicit restricted boundary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
+  const validator = new RepositoryCommandValidator({
+    command: [process.execPath, "-e", "process.stdout.write('unsafe')"],
+  });
+  await assert.rejects(
+    validator.validate(workspace(root)),
+    (error) => error.code === "VALIDATION_LAUNCH_FAILED",
+  );
+});
+
 test("detects dotnet validation for a solution-only repository", async () => {
   const root = await mkdtemp(join(tmpdir(), "repo-validator-"));
   await mkdir(join(root, "src", "App"), { recursive: true });
