@@ -14,6 +14,7 @@ import {
 } from "../../dist/packages/domain/src/validation/index.js";
 
 import { PnpmWorkspaceValidator } from "../../dist/packages/integrations/src/validation/index.js";
+import { sanitizedGitEnv } from "../support/git-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -52,7 +53,11 @@ function createWorkspace(workspacePath) {
 
 async function git(cwd, ...args) {
   return (
-    await execFileAsync("/usr/bin/git", args, { cwd, encoding: "utf8" })
+    await execFileAsync("/usr/bin/git", args, {
+      cwd,
+      encoding: "utf8",
+      env: sanitizedGitEnv(),
+    })
   ).stdout.trim();
 }
 

@@ -20,22 +20,20 @@ import {
   gitBoundaryErrorCodes,
 } from "../../dist/packages/domain/src/git/index.js";
 import { GitChangePublisher } from "../../dist/packages/integrations/src/git/index.js";
+import { git, sanitizedGitEnv } from "../support/git-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 const gitExecutablePath = "/usr/bin/git";
-
-async function git(cwd, ...args) {
-  return (
-    await execFileAsync("git", args, { cwd, encoding: "utf8" })
-  ).stdout.trim();
-}
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "all-316-git-"));
   const remote = join(root, "remote.git");
   const source = join(root, "source");
   const workspacePath = join(root, "worktree");
-  await execFileAsync("git", ["init", "--bare", remote]);
+  await execFileAsync("git", ["init", "--bare", remote], {
+    cwd: root,
+    env: sanitizedGitEnv(),
+  });
   await mkdir(source);
   await git(source, "init", "-b", "develop");
   await git(source, "config", "user.name", "Test User");

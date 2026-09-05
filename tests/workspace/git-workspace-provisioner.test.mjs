@@ -12,20 +12,9 @@ import {
 } from "../../dist/packages/domain/src/workspace/index.js";
 
 import { GitWorkspaceProvisioner } from "../../dist/packages/integrations/src/git/git-workspace-provisioner.js";
+import { git, sanitizedGitEnv } from "../support/git-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
-
-async function git(repositoryPath, ...args) {
-  const { stdout } = await execFileAsync(
-    "git",
-    ["-C", repositoryPath, ...args],
-    {
-      encoding: "utf8",
-    },
-  );
-
-  return stdout.trim();
-}
 
 async function pathExists(path) {
   try {
@@ -45,12 +34,25 @@ async function createTestRepository() {
   const sourcePath = join(rootPath, "source");
   const workspacePath = join(rootPath, "workspace");
 
-  await execFileAsync("git", ["init", "--bare", remotePath]);
+  await execFileAsync("git", ["init", "--bare", remotePath], {
+    cwd: rootPath,
+    env: sanitizedGitEnv(),
+  });
 
   await mkdir(sourcePath);
 
-  await execFileAsync("git", ["init", sourcePath]);
+  await execFileAsync("git", ["init", sourcePath], {
+    cwd: rootPath,
+    env: sanitizedGitEnv(),
+  });
 
+  // Set locally (not globally) so this setting also applies to worktrees
+  // production code creates from this repo, which spawn git without the
+  // sanitized fixture environment: without it, a real GIT_CONFIG_GLOBAL
+  // that enables core.autocrlf can convert a checked-out file's line
+  // endings while the commit made through the sanitized fixture env does
+  // not, producing a spurious working-tree modification.
+  await git(sourcePath, "config", "core.autocrlf", "false");
   await git(sourcePath, "config", "user.name", "Workspace Test");
   await git(
     sourcePath,
