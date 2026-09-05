@@ -179,3 +179,41 @@ test("sanitizedGitEnv always forces git config isolation, even when the invoker 
     else process.env.GIT_CONFIG_GLOBAL = originalGlobal;
   }
 });
+
+test("sanitizedGitEnv strips runtime config injection (GIT_CONFIG_COUNT/KEY_n/VALUE_n), which bypasses GIT_CONFIG_GLOBAL entirely", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "git-fixture-sanitization-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await git(root, "init", "-b", "main");
+
+  const originalCount = process.env.GIT_CONFIG_COUNT;
+  const originalKey0 = process.env.GIT_CONFIG_KEY_0;
+  const originalValue0 = process.env.GIT_CONFIG_VALUE_0;
+  process.env.GIT_CONFIG_COUNT = "1";
+  process.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
+  process.env.GIT_CONFIG_VALUE_0 = join(root, "attacker-hooks");
+  try {
+    // Confirm the injection actually works when NOT sanitized, so the test
+    // proves something real rather than asserting against a no-op.
+    const injected = await execFileAsync(
+      "git",
+      ["config", "--get", "core.hooksPath"],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(injected.stdout.trim(), join(root, "attacker-hooks"));
+
+    await assert.rejects(
+      execFileAsync("git", ["config", "--get", "core.hooksPath"], {
+        cwd: root,
+        encoding: "utf8",
+        env: sanitizedGitEnv(),
+      }),
+    );
+  } finally {
+    if (originalCount === undefined) delete process.env.GIT_CONFIG_COUNT;
+    else process.env.GIT_CONFIG_COUNT = originalCount;
+    if (originalKey0 === undefined) delete process.env.GIT_CONFIG_KEY_0;
+    else process.env.GIT_CONFIG_KEY_0 = originalKey0;
+    if (originalValue0 === undefined) delete process.env.GIT_CONFIG_VALUE_0;
+    else process.env.GIT_CONFIG_VALUE_0 = originalValue0;
+  }
+});
