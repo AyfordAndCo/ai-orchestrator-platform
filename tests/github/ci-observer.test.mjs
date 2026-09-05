@@ -12,6 +12,7 @@ function createObserver(responses, calls) {
     },
     timeoutMs: 10,
     pollIntervalMs: 1,
+    requiredCheckNames: ["build", "lint"],
   });
 }
 
@@ -47,7 +48,9 @@ test("maps check runs into provider-neutral CI states", async () => {
     calls.some((args) => args.some((arg) => String(arg).includes("/pulls/7"))),
   );
   assert.ok(
-    calls.some((args) => args.some((arg) => String(arg).includes("/checks"))),
+    calls.some((args) =>
+      args.some((arg) => String(arg).includes("/check-runs")),
+    ),
   );
 });
 
@@ -102,7 +105,7 @@ test("times out when checks never resolve", async () => {
     execFileImplementation: async (_file, args) => {
       calls.push(args);
 
-      if (args.some((arg) => String(arg).includes("/pulls/7/checks"))) {
+      if (args.some((arg) => String(arg).includes("/check-runs"))) {
         return {
           stdout: JSON.stringify({
             check_runs: [
@@ -122,6 +125,7 @@ test("times out when checks never resolve", async () => {
     },
     timeoutMs: 10,
     pollIntervalMs: 1,
+    requiredCheckNames: ["build"],
   });
 
   const result = await observer.observe({

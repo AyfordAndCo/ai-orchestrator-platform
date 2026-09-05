@@ -11,6 +11,11 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 1_000_000;
+const DEFAULT_REQUIRED_CHECK_NAMES = Object.freeze([
+  "Validate Repository",
+  "Review quorum",
+  "Human review policy",
+]);
 
 interface GhResult {
   readonly stdout: string;
@@ -22,6 +27,7 @@ export interface GhCliCiObserverOptions {
   readonly execFileImplementation?: typeof execFileAsync;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
+  readonly requiredCheckNames?: readonly string[];
 }
 
 function repositoryPath(repository: string): string {
@@ -82,6 +88,7 @@ export class GhCliCiObserver implements CiObserver {
   readonly #execFile: typeof execFileAsync;
   readonly #timeoutMs: number;
   readonly #pollIntervalMs: number;
+  readonly #requiredCheckNames: readonly string[];
 
   constructor(options: GhCliCiObserverOptions) {
     if (!isAbsolute(options.executablePath)) {
@@ -92,6 +99,8 @@ export class GhCliCiObserver implements CiObserver {
     this.#execFile = options.execFileImplementation ?? execFileAsync;
     this.#timeoutMs = options.timeoutMs ?? 60_000;
     this.#pollIntervalMs = options.pollIntervalMs ?? 2_000;
+    this.#requiredCheckNames =
+      options.requiredCheckNames ?? DEFAULT_REQUIRED_CHECK_NAMES;
   }
 
   async #api<T>(
@@ -151,7 +160,7 @@ export class GhCliCiObserver implements CiObserver {
         }>;
       }>(
         "get checks",
-        `repos/${repository}/pulls/${request.pullRequestNumber}/checks`,
+        `repos/${repository}/commits/${request.expectedHeadSha}/check-runs`,
       );
 
       const checks = (value.check_runs ?? []).map((check) => ({
@@ -163,7 +172,11 @@ export class GhCliCiObserver implements CiObserver {
       }));
 
       const state = mapState(checks);
-      if (state === "success") {
+      const observedCheckNames = new Set(checks.map((check) => check.name));
+      const allRequiredChecksObserved = this.#requiredCheckNames.every((name) =>
+        observedCheckNames.has(name),
+      );
+      if (state === "success" && allRequiredChecksObserved) {
         return {
           state,
           checks,

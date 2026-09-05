@@ -1,6 +1,7 @@
 /* global console */
 
 import { execFileSync } from "node:child_process";
+import { Buffer } from "node:buffer";
 import process from "node:process";
 
 import {
@@ -28,9 +29,15 @@ const diff = execFileSync(
   ["diff", "--no-ext-diff", "origin/main...HEAD"],
   {
     encoding: "utf8",
-    maxBuffer: 2_000_000,
+    maxBuffer: 20_000_000,
   },
 );
+const MAX_REVIEW_DIFF_BYTES = 10_000_000;
+if (Buffer.byteLength(diff, "utf8") > MAX_REVIEW_DIFF_BYTES) {
+  throw new Error(
+    `Candidate diff exceeds the independent review limit of ${MAX_REVIEW_DIFF_BYTES} bytes`,
+  );
+}
 const trackedFiles = execFileSync("git", ["ls-files"], { encoding: "utf8" });
 
 const prompt = `You are an independent code reviewer. Review only the candidate diff below.
@@ -54,7 +61,7 @@ Tracked file manifest:
 ${trackedFiles}
 
 Candidate diff:
-${diff.slice(0, 20_000)}`;
+${diff}`;
 
 const provider =
   providerName === "gemini"

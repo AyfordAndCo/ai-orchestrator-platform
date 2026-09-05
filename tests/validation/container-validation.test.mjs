@@ -69,6 +69,7 @@ await writeFile(process.env.RECORD_PATH, JSON.stringify(process.argv.slice(2)));
       "--env",
       "CI=true",
       `docker.io/example/validator@sha256:${"a".repeat(64)}`,
+      "pnpm",
       "validate",
     ]);
   } finally {

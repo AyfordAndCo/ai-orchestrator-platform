@@ -46,12 +46,17 @@ test("creates PRs and reads checks/reviews through gh without a shell", async ()
   });
 
   assert.equal(pullRequest.number, 7);
-  assert.deepEqual(await client.getChecks("allan/repo", 7), [
+  assert.deepEqual(await client.getChecks("allan/repo", 7, "abc"), [
     { name: "ci", state: "SUCCESS" },
   ]);
   assert.equal((await client.getReviews("allan/repo", 7))[0].state, "APPROVED");
   assert.equal(calls[0][0], "api");
   assert.equal(calls[0].includes("--method"), true);
+  assert.ok(
+    calls.some((args) =>
+      args.some((arg) => String(arg).includes("commits/abc/check-runs")),
+    ),
+  );
 });
 
 test("rejects malformed repositories and requires a fixed gh path", () => {

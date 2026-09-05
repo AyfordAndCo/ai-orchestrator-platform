@@ -84,43 +84,14 @@ const latestReview = reviewerHistory.at(-1);
 let approved =
   latestReview?.state === "APPROVED" && latestReview.commit_id === headSha;
 
-if (!approved) {
-  const pullRequest = await github(
-    `/repos/${repository}/pulls/${pullRequestNumber}`,
-  );
-  const authorMaySelfApprove = pullRequest.user?.login === requiredReviewer;
-
-  if (authorMaySelfApprove) {
-    const authorReviews = reviews
-      .filter((review) => review.user?.login === pullRequest.user?.login)
-      .sort(
-        (left, right) =>
-          new Date(left.submitted_at ?? 0).getTime() -
-          new Date(right.submitted_at ?? 0).getTime(),
-      );
-    const latestAuthorReview = authorReviews.at(-1);
-    approved =
-      latestAuthorReview?.state === "APPROVED" &&
-      latestAuthorReview.commit_id === headSha;
-  }
-
-  if (!approved && pullRequest.user?.login === requiredReviewer) {
-    const comments = await github(
-      `/repos/${repository}/issues/${pullRequestNumber}/comments?per_page=100`,
-    );
-    const approvalComment = `Human review approval for commit ${headSha}`;
-    approved = comments.some(
-      (comment) =>
-        comment.user?.login === requiredReviewer &&
-        comment.body?.trim() === approvalComment,
-    );
-  }
+const pullRequest = await github(
+  `/repos/${repository}/pulls/${pullRequestNumber}`,
+);
+if (pullRequest.user?.login === requiredReviewer) {
+  approved = false;
 }
 
 if (!approved) {
-  const pullRequest = await github(
-    `/repos/${repository}/pulls/${pullRequestNumber}`,
-  );
   if (pullRequest.user?.login !== requiredReviewer) {
     try {
       await github(
@@ -137,11 +108,11 @@ if (!approved) {
     }
   }
   console.error(
-    `Human approval from @${requiredReviewer} is required for: ${sensitiveFiles.join(", ")}`,
+    `Approval from a distinct human reviewer @${requiredReviewer} is required for: ${sensitiveFiles.join(", ")}`,
   );
   process.exit(1);
 }
 
 console.log(
-  `Human review policy: @${requiredReviewer} approved the current commit${latestReview ? " by review" : " by signed approval comment"}.`,
+  `Human review policy: @${requiredReviewer} approved the current commit by review.`,
 );

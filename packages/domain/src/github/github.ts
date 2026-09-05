@@ -66,6 +66,7 @@ export interface GitHubClient {
   getChecks(
     repository: string,
     pullRequestNumber: number,
+    expectedHeadSha: string,
   ): Promise<readonly GitHubCheck[]>;
   getReviews(
     repository: string,

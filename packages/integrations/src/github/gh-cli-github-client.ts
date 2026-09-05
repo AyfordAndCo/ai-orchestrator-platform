@@ -132,6 +132,7 @@ export class GhCliGitHubClient implements GitHubClient {
   async getChecks(
     repository: string,
     pullRequestNumber: number,
+    expectedHeadSha: string,
   ): Promise<readonly GitHubCheck[]> {
     const value = await this.#api<{
       check_runs?: Array<{
@@ -142,7 +143,7 @@ export class GhCliGitHubClient implements GitHubClient {
       }>;
     }>(
       "get checks",
-      `repos/${repositoryPath(repository)}/pulls/${pullRequestNumber}/checks`,
+      `repos/${repositoryPath(repository)}/commits/${expectedHeadSha}/check-runs`,
     );
     return (value.check_runs ?? []).map((check) => ({
       name: check.name,

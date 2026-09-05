@@ -167,6 +167,7 @@ function createValidationProcess(
         "--env",
         "CI=true",
         container.image,
+        "pnpm",
         "validate",
       ],
       {
