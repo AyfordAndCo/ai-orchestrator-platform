@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import process from "node:process";
+import { URL, fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import {
@@ -8,6 +12,14 @@ import {
   requireArg,
   resolveExecutable,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
+
+const execFileAsync = promisify(execFile);
+const cliPath = fileURLToPath(
+  new URL(
+    "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js",
+    import.meta.url,
+  ),
+);
 
 const explicitExecutablePaths = [
   "--codex-path",
@@ -186,4 +198,19 @@ test("buildInstruction includes the issue number, title, and body", () => {
   assert.match(instruction, /Implement GitHub issue #7: Fix the thing/);
   assert.match(instruction, /Do the specific fix\./);
   assert.match(instruction, /Do not perform unrelated refactors\./);
+});
+
+test("running the compiled file directly actually executes main() (entrypoint detection works on this platform)", async () => {
+  // A previous version compared import.meta.url against a hand-built
+  // file:// URL that was wrong on Windows (missing the leading slash before
+  // the drive letter), so main() silently never ran when this file was
+  // invoked as a CLI entrypoint. Importing the module's exports (as the
+  // other tests in this file do) can't catch that class of bug, since it
+  // never goes through entrypoint detection at all - only actually spawning
+  // the compiled file as a subprocess does.
+  await assert.rejects(execFileAsync(process.execPath, [cliPath]), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(String(error.stderr ?? error), /--repo is required/);
+    return true;
+  });
 });

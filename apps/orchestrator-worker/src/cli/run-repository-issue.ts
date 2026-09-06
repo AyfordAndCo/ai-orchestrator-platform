@@ -25,6 +25,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { promisify } from "node:util";
 
@@ -304,7 +305,7 @@ async function main(): Promise<void> {
 
 const isMainModule =
   process.argv[1] !== undefined &&
-  import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`;
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMainModule) {
   main().catch((error: unknown) => {
