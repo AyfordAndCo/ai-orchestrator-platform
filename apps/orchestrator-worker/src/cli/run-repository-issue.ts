@@ -1151,6 +1151,10 @@ async function main(): Promise<void> {
           executablePath: options.dockerPath,
           image: options.containerImage,
         },
+        // Reuse the same already-resolved, absolute git executable used
+        // everywhere else in this CLI, rather than letting
+        // RepositoryCommandValidator fall back to its own PATH resolution.
+        gitExecutablePath: options.gitPath,
         timeoutMs: options.validationTimeoutMs,
         ...(options.bunImage === undefined && options.dotnetImage === undefined
           ? {}
