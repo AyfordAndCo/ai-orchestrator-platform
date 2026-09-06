@@ -6,9 +6,12 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  assertOriginMatchesRepo,
   buildInstruction,
   parseArgs,
+  parseGitHubOwnerRepo,
   readOptions,
+  redactUrl,
   requireArg,
   resolveExecutable,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
@@ -198,6 +201,80 @@ test("buildInstruction includes the issue number, title, and body", () => {
   assert.match(instruction, /Implement GitHub issue #7: Fix the thing/);
   assert.match(instruction, /Do the specific fix\./);
   assert.match(instruction, /Do not perform unrelated refactors\./);
+});
+
+test("redactUrl strips embedded userinfo from an HTTPS origin", () => {
+  assert.equal(
+    redactUrl("https://ghp_secrettoken@github.com/AyfordAndCo/example.git"),
+    "https://github.com/AyfordAndCo/example.git",
+  );
+  assert.equal(
+    redactUrl("https://user:ghp_secrettoken@github.com/owner/repo.git"),
+    "https://github.com/owner/repo.git",
+  );
+});
+
+test("redactUrl leaves URLs without embedded credentials unchanged", () => {
+  assert.equal(
+    redactUrl("https://github.com/AyfordAndCo/example.git"),
+    "https://github.com/AyfordAndCo/example.git",
+  );
+  assert.equal(
+    redactUrl("git@github.com:AyfordAndCo/example.git"),
+    "git@github.com:AyfordAndCo/example.git",
+  );
+});
+
+test("parseGitHubOwnerRepo handles SSH, HTTPS, and credentialed HTTPS origin forms", () => {
+  assert.deepEqual(
+    parseGitHubOwnerRepo("git@github.com:AyfordAndCo/example.git"),
+    { owner: "AyfordAndCo", repo: "example" },
+  );
+  assert.deepEqual(
+    parseGitHubOwnerRepo("https://github.com/AyfordAndCo/example"),
+    { owner: "AyfordAndCo", repo: "example" },
+  );
+  assert.deepEqual(
+    parseGitHubOwnerRepo(
+      "https://x-access-token:ghp_x@github.com/AyfordAndCo/example.git",
+    ),
+    { owner: "AyfordAndCo", repo: "example" },
+  );
+});
+
+test("parseGitHubOwnerRepo returns undefined for an unrecognized form", () => {
+  assert.equal(parseGitHubOwnerRepo("not-a-url"), undefined);
+  assert.equal(
+    parseGitHubOwnerRepo("https://gitlab.com/owner/repo"),
+    undefined,
+  );
+});
+
+test("assertOriginMatchesRepo accepts a matching origin regardless of SSH/HTTPS style or case", () => {
+  assert.doesNotThrow(() =>
+    assertOriginMatchesRepo(
+      "git@github.com:AyfordAndCo/Example.git",
+      "ayfordandco/example",
+    ),
+  );
+});
+
+test("assertOriginMatchesRepo rejects a clone pointed at a different repository", () => {
+  assert.throws(
+    () =>
+      assertOriginMatchesRepo(
+        "git@github.com:SomeoneElse/other.git",
+        "AyfordAndCo/example",
+      ),
+    /does not match --repo/,
+  );
+});
+
+test("assertOriginMatchesRepo fails closed on an unrecognized origin form", () => {
+  assert.throws(
+    () => assertOriginMatchesRepo("not-a-url", "AyfordAndCo/example"),
+    /Unable to verify/,
+  );
 });
 
 test("running the compiled file directly actually executes main() (entrypoint detection works on this platform)", async () => {

@@ -221,6 +221,56 @@ export async function readOriginUrl(
   return stdout.trim();
 }
 
+/** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
+export function redactUrl(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
+}
+
+/**
+ * Extracts { owner, repo } from a GitHub SSH or HTTPS origin URL. Returns
+ * undefined for anything else, so callers can fail closed rather than skip
+ * the check on an unrecognized form.
+ */
+export function parseGitHubOwnerRepo(
+  url: string,
+): { readonly owner: string; readonly repo: string } | undefined {
+  const patterns = [
+    /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i,
+    /^ssh:\/\/git@github\.com\/([^/]+)\/(.+?)(?:\.git)?$/i,
+    /^https?:\/\/(?:[^/@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(url.trim());
+    if (match?.[1] !== undefined && match[2] !== undefined) {
+      return { owner: match[1], repo: match[2] };
+    }
+  }
+  return undefined;
+}
+
+export function assertOriginMatchesRepo(originUrl: string, repo: string): void {
+  const parsedRepo = /^([^/\s]+)\/([^/\s]+)$/.exec(repo);
+  if (parsedRepo?.[1] === undefined || parsedRepo[2] === undefined) {
+    throw new RangeError("--repo must use the owner/name format");
+  }
+  const parsedOrigin = parseGitHubOwnerRepo(originUrl);
+  if (parsedOrigin === undefined) {
+    throw new Error(
+      `Unable to verify that --repository-path's origin (${redactUrl(originUrl)}) ` +
+        `matches --repo ${repo}: unrecognized origin URL form.`,
+    );
+  }
+  const matches =
+    parsedOrigin.owner.toLowerCase() === parsedRepo[1].toLowerCase() &&
+    parsedOrigin.repo.toLowerCase() === parsedRepo[2].toLowerCase();
+  if (!matches) {
+    throw new Error(
+      `--repository-path's origin (${parsedOrigin.owner}/${parsedOrigin.repo}) ` +
+        `does not match --repo (${repo}).`,
+    );
+  }
+}
+
 export function buildInstruction(issue: number, summary: IssueSummary): string {
   return [
     `Implement GitHub issue #${issue}: ${summary.title}`,
@@ -246,6 +296,7 @@ async function main(): Promise<void> {
     options.gitPath,
     options.repositoryPath,
   );
+  assertOriginMatchesRepo(originUrl, options.repo);
 
   const runId = randomUUID();
   const workspacePath = `${options.workspaceRoot}/run-${runId}`;
@@ -253,7 +304,7 @@ async function main(): Promise<void> {
   console.log(`Run ${runId}`);
   console.log(`Feature branch: ${options.featureBranch}`);
   console.log(`Workspace: ${workspacePath}`);
-  console.log(`Origin: ${originUrl}`);
+  console.log(`Origin: ${redactUrl(originUrl)}`);
 
   const result = await executeRepositoryRun(
     {
