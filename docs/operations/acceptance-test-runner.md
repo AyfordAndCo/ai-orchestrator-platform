@@ -17,7 +17,7 @@ granting an agent unrestricted host access, so there is no host-execution
 escape hatch here: if you don't yet have a pinned validation image, publish
 one before running this.
 
-Codex itself runs with `workspace-write` sandboxing, which restricts *writes*
+Codex itself runs with `workspace-write` sandboxing, which restricts _writes_
 to its workspace but - like other sandboxed coding agents - still allows
 reads across the rest of the filesystem. `CodexCliAgentExecutor` never passes
 Codex the operator's real `HOME`: it creates a fresh, empty directory under
@@ -27,8 +27,6 @@ repopulate with the real profile's values even when `HOME` alone is
 isolated) at that instead, so Codex can't read `~/.ssh` private keys or
 `~/.config/gh/hosts.yml` - the same write-capable credentials used later for
 the push and PR publication - and misuse them over its network access.
-
-
 
 ## Prerequisites
 
@@ -170,20 +168,20 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
   --container-image "docker.io/ayfordandco/ai-orchestrator-platform-validation@sha256:<digest>"
 ```
 
-| Flag                                                          | Required    | Default                                 | Notes                                                                                                               |
-| ------------------------------------------------------------- | ----------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `--repo`                                                      | yes         |                                         | `owner/name`; verified against `--repository-path`'s actual fetch **and** push origin URLs before anything runs     |
-| `--repository-path`                                           | yes         |                                         | local clone, must be clean and on `main`                                                                            |
-| `--issue`                                                     | yes         |                                         | GitHub issue number to implement                                                                                    |
+| Flag                                                          | Required    | Default                                 | Notes                                                                                                                                                        |
+| ------------------------------------------------------------- | ----------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--repo`                                                      | yes         |                                         | `owner/name`; verified against `--repository-path`'s actual fetch **and** push origin URLs before anything runs                                              |
+| `--repository-path`                                           | yes         |                                         | local clone, must be clean and on `main`                                                                                                                     |
+| `--issue`                                                     | yes         |                                         | GitHub issue number to implement                                                                                                                             |
 | `--workspace-root`                                            | yes         |                                         | absolute; the isolated worktree, Codex's isolated `HOME` (`codex-home/`), and the clean-clone push staging directory (`publish/`) are all created under here |
-| `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                             |
-| `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                        |
-| `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | validated against this repo's `<developer>/<issue-key>-<short-description>` convention and must reference `--issue` |
-| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute, an existing regular file, and executable, if passed                                               |
-| `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                    |
-| `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                         |
-| `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                      |
-| `--agent-timeout-ms`                                          | no          | `1200000` (20 min)                      | how long Codex may run before treating the execution as failed                                                      |
+| `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                                                                      |
+| `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                                                                 |
+| `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | validated against this repo's `<developer>/<issue-key>-<short-description>` convention and must reference `--issue`                                          |
+| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute, an existing regular file, and executable, if passed                                                                                        |
+| `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                                                             |
+| `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                                                                  |
+| `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                                                               |
+| `--agent-timeout-ms`                                          | no          | `1200000` (20 min)                      | how long Codex may run before treating the execution as failed                                                                                               |
 
 Passing `--base-branch`, `--allow-host-validation`, or `--github-token` is
 rejected outright with an explanatory error — none of these are supported
