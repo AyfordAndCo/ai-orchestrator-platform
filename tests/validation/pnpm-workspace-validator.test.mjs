@@ -1,22 +1,61 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { execFile } from "node:child_process";
 import process from "node:process";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  mkdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { promisify } from "node:util";
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import {
   WorkspaceValidationError,
   validationErrorCodes,
 } from "../../dist/packages/domain/src/validation/index.js";
 
-import { PnpmWorkspaceValidator } from "../../dist/packages/integrations/src/validation/index.js";
-import { sanitizedGitEnv } from "../support/git-fixture.mjs";
+import {
+  PnpmWorkspaceValidator,
+  resolveExecutableCandidate,
+} from "../../dist/packages/integrations/src/validation/index.js";
+import { git } from "../support/git-fixture.mjs";
 
-const execFileAsync = promisify(execFile);
+test("resolveExecutableCandidate resolves a relative where/which match against the lookup-time cwd", () => {
+  const lookupCwd = process.platform === "win32" ? "C:\\repo" : "/repo";
+  const relativeMatch =
+    process.platform === "win32" ? "bin\\git.exe" : "bin/git";
+
+  assert.equal(
+    resolveExecutableCandidate(relativeMatch, lookupCwd),
+    join(lookupCwd, relativeMatch),
+  );
+});
+
+test("resolveExecutableCandidate leaves an absolute match unchanged", () => {
+  const absoluteMatch =
+    process.platform === "win32"
+      ? "C:\\Program Files\\Git\\cmd\\git.exe"
+      : "/usr/bin/git";
+
+  assert.equal(
+    resolveExecutableCandidate(absoluteMatch, "/some/other/cwd"),
+    absoluteMatch,
+  );
+});
 
 async function createFixture(validationSource) {
   const root = await mkdtemp(join(tmpdir(), "all-313-validation-"));
@@ -49,16 +88,6 @@ function createWorkspace(workspacePath) {
     featureBranch: "allan/all-313-test",
     workspacePath,
   };
-}
-
-async function git(cwd, ...args) {
-  return (
-    await execFileAsync("/usr/bin/git", args, {
-      cwd,
-      encoding: "utf8",
-      env: sanitizedGitEnv(),
-    })
-  ).stdout.trim();
 }
 
 async function createGitFixture(validationSource) {
@@ -97,6 +126,40 @@ process.stderr.write("validation-diagnostic");
     assert.match(result.stderr, /validation-diagnostic/);
 
     assert.ok(result.durationMs >= 0);
+  } finally {
+    await rm(workspacePath, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test("does not let a workspace-planted pnpm shim hijack unsandboxed Windows validation", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip(
+      "Windows-specific: only the shell:true cmd.exe fallback used on " +
+        "win32 searches the workspace cwd before PATH",
+    );
+    return;
+  }
+
+  const workspacePath = await createFixture(`
+process.stdout.write("validation-ok");
+`);
+  const marker = join(workspacePath, "decoy-ran.txt");
+  await writeFile(
+    join(workspacePath, "pnpm.cmd"),
+    `@echo off\r\necho ran > "${marker}"\r\nexit /b 1\r\n`,
+  );
+
+  try {
+    const validator = new PnpmWorkspaceValidator();
+
+    const result = await validator.validate(createWorkspace(workspacePath));
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /validation-ok/);
+    assert.equal(await pathExists(marker), false);
   } finally {
     await rm(workspacePath, {
       recursive: true,
@@ -195,7 +258,15 @@ test("rejects a symlink workspace path", async () => {
   const link = join(root, "workspace-link");
 
   await mkdir(target);
-  await symlink(target, link, "dir");
+  // A real directory symlink needs an elevated privilege (Developer Mode or
+  // admin) on Windows; an NTFS junction is also a reparse point lstat()
+  // reports the same way (not a real directory) but doesn't need that
+  // privilege, so it exercises the same rejection path on every platform.
+  await symlink(
+    target,
+    link,
+    process.platform === "win32" ? "junction" : "dir",
+  );
 
   try {
     const validator = new PnpmWorkspaceValidator();
@@ -286,13 +357,35 @@ process.stdout.write("should-not-run");
       environment: { PATH: "" },
     });
 
+    // On Windows, resolveDefaultPnpmExecutablePath's module-level cache
+    // determines which stable code this surfaces as: cold (this test is the
+    // first to resolve pnpm in this process), the where/which lookup itself
+    // fails against the blanked PATH (VALIDATION_LAUNCH_FAILED); warm
+    // (an earlier test already cached pnpm's absolute path), resolution is
+    // skipped and it falls through to the bare-"pnpm" fallback's cmd.exe
+    // shell, which fails as a normal nonzero exit (VALIDATION_FAILED)
+    // instead. Both are stable, recognizable signals that validation could
+    // not run pnpm; which one applies isn't deterministic across test
+    // ordering, so accept either on Windows. POSIX never resolves pnpm up
+    // front - it always fails at spawn time (VALIDATION_LAUNCH_FAILED).
+    const acceptableCodes =
+      process.platform === "win32"
+        ? [
+            validationErrorCodes.VALIDATION_FAILED,
+            validationErrorCodes.VALIDATION_LAUNCH_FAILED,
+          ]
+        : [validationErrorCodes.VALIDATION_LAUNCH_FAILED];
+
     await assert.rejects(
       validator.validate(createWorkspace(workspacePath)),
-      (error) =>
-        assertValidationError(
-          error,
-          validationErrorCodes.VALIDATION_LAUNCH_FAILED,
-        ),
+      (error) => {
+        assert.ok(error instanceof WorkspaceValidationError);
+        assert.ok(
+          acceptableCodes.includes(error.code),
+          `unexpected code: ${error.code}`,
+        );
+        return true;
+      },
     );
   } finally {
     if (originalPath === undefined) {
@@ -326,7 +419,7 @@ process.stdout.write("candidate-ok");
       join(workspacePath, "validate.mjs"),
       `
 import { execFileSync } from "node:child_process";
-execFileSync("/usr/bin/git", ["commit", "--allow-empty", "-m", "validation-mutation"]);
+execFileSync("git", ["commit", "--allow-empty", "-m", "validation-mutation"]);
 process.exitCode = 9;
 `,
     );
@@ -338,6 +431,47 @@ process.exitCode = 9;
           validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
         ),
     );
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("resolves the default git executable to an absolute path, not searched relative to the (agent-controlled) workspace cwd", async () => {
+  const workspacePath = await createGitFixture(`
+process.stdout.write("candidate-ok");
+`);
+
+  try {
+    // readHead() runs with cwd set to this same workspace. On Windows, a
+    // bare command name is searched in cwd *before* PATH by default
+    // (regardless of PATH content) - so if the default gitExecutablePath
+    // were still the bare string "git", this decoy sitting in the
+    // workspace root would run instead of the real system git. On POSIX
+    // this only happens if PATH contains a relative entry like ".", which
+    // this test doesn't attempt to simulate, but the fix (resolving to an
+    // absolute path up front) closes the gap on both platforms the same
+    // way.
+    const decoyMarker = join(workspacePath, "decoy-ran.txt");
+    const decoyName = process.platform === "win32" ? "git.cmd" : "git";
+    const decoyPath = join(workspacePath, decoyName);
+    await writeFile(
+      decoyPath,
+      process.platform === "win32"
+        ? `@echo off\r\necho ran > "${decoyMarker}"\r\nexit /b 1\r\n`
+        : `#!/bin/sh\necho ran > "${decoyMarker}"\nexit 1\n`,
+    );
+    if (process.platform !== "win32") {
+      await chmod(decoyPath, 0o755);
+    }
+
+    const candidateCommitSha = await git(workspacePath, "rev-parse", "HEAD");
+    const validator = new PnpmWorkspaceValidator();
+    const result = await validator.validate(
+      createWorkspace(workspacePath),
+      candidateCommitSha,
+    );
+    assert.match(result.stdout, /candidate-ok/);
+    assert.equal(await pathExists(decoyMarker), false);
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }

@@ -1,4 +1,7 @@
-export { PnpmWorkspaceValidator } from "./pnpm-workspace-validator.js";
+export {
+  PnpmWorkspaceValidator,
+  resolveExecutableCandidate,
+} from "./pnpm-workspace-validator.js";
 export {
   RepositoryCommandValidator,
   detectValidationCommand,

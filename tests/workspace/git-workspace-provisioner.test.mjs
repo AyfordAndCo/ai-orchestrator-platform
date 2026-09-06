@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -143,8 +144,66 @@ test("creates an isolated workspace and returns metadata", async () => {
       "--porcelain",
     );
 
-    assert.match(worktreeList, new RegExp(repository.workspacePath));
+    // `git worktree list --porcelain` always emits forward-slash paths, even
+    // on Windows, so comparing against the native (backslash) path here
+    // failed on every Windows run. Comparing substrings (after normalizing
+    // separators) also avoids treating a filesystem path - which can contain
+    // regex metacharacters - as a regular expression pattern.
+    const normalizedWorkspacePath = repository.workspacePath
+      .split("\\")
+      .join("/");
+    assert.ok(
+      worktreeList.includes(normalizedWorkspacePath),
+      `Expected worktree list to include ${normalizedWorkspacePath}, got:\n${worktreeList}`,
+    );
   } finally {
+    await cleanup(repository);
+  }
+});
+
+test("fetches under the ambient environment, so a global config rewrite (e.g. from a credential setup) is honored rather than discarded", async () => {
+  const repository = await createTestRepository();
+  const fakeGlobalConfig = join(repository.rootPath, "fake-global-gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    // Point origin at a shorthand that only resolves through a global
+    // insteadOf rewrite - to the real remote it was actually set up
+    // against. insteadOf rewrites by replacing the matched prefix with the
+    // url.<base> value via plain string concatenation, so the shorthand
+    // must have nothing after the matched prefix, or the remainder gets
+    // appended onto the replacement path instead of resolving cleanly.
+    await git(
+      repository.sourcePath,
+      "remote",
+      "set-url",
+      "origin",
+      "redirect-test:",
+    );
+    // git config's INI-style syntax treats "\" as an escape character
+    // inside a quoted section value, so a raw Windows path must have its
+    // backslashes escaped before being embedded here - otherwise git
+    // silently strips them, mangling the path.
+    const escapedRemotePath = repository.remotePath.replace(/\\/g, "\\\\");
+    await writeFile(
+      fakeGlobalConfig,
+      `[url "${escapedRemotePath}"]\n\tinsteadOf = redirect-test:\n`,
+    );
+    process.env.GIT_CONFIG_GLOBAL = fakeGlobalConfig;
+
+    // GitWorkspaceProvisioner deliberately does not isolate global/system
+    // config (see its own module comment): it needs the operator's real
+    // credential setup, most commonly configured at the global or system
+    // level, to authenticate at all. This rewrite is a stand-in for that -
+    // preflight (and the fetch it triggers) must resolve it exactly the
+    // way an ambient, unisolated git invocation would, rather than failing
+    // to find a helper/rewrite that only exists outside local config.
+    const provisioner = new GitWorkspaceProvisioner();
+    await assert.doesNotReject(
+      provisioner.preflight(createRequest(repository)),
+    );
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await cleanup(repository);
   }
 });
