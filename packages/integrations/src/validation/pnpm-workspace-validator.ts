@@ -15,14 +15,47 @@ import type { Workspace } from "../../../domain/src/workspace/index.js";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
-// Deliberately a bare command, resolved via PATH by the OS at spawn time -
-// GitWorkspaceProvisioner already does the same for the same reason: an
-// absolute default would have to pick one platform's install layout (this
-// was previously hardcoded to "/usr/bin/git", which never exists on
-// Windows). An explicit override is still required to be absolute below,
-// since that's operator-supplied and pinning it is the point.
-const DEFAULT_GIT_EXECUTABLE_PATH = "git";
 const execFileAsync = promisify(execFile);
+
+let cachedDefaultGitExecutablePath: string | undefined;
+
+/**
+ * Resolves an absolute default git executable path via PATH once, then
+ * caches it. This can't be a plain bare "git" string the way
+ * GitWorkspaceProvisioner's default is: readHead() below runs with `cwd`
+ * set to the (agent-controlled) workspace being validated, and a bare
+ * command name is searched relative to `cwd` on Windows by default (before
+ * PATH is even considered) and can be on POSIX too if PATH contains a
+ * relative entry like "."). Either way, a candidate commit could plant an
+ * executable literally named "git" in the workspace and have it run with
+ * host privileges during this integrity check. Resolving to an absolute
+ * path up front bypasses that search entirely.
+ */
+function resolveDefaultGitExecutablePath(): string {
+  if (cachedDefaultGitExecutablePath !== undefined) {
+    return cachedDefaultGitExecutablePath;
+  }
+  const finder = process.platform === "win32" ? "where" : "which";
+  let resolved: string | undefined;
+  try {
+    const stdout = execFileSync(finder, ["git"], { encoding: "utf8" });
+    resolved = stdout.split(/\r?\n/)[0]?.trim();
+  } catch (error) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+      { cause: error },
+    );
+  }
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+    );
+  }
+  cachedDefaultGitExecutablePath = resolved;
+  return resolved;
+}
 
 export interface PnpmWorkspaceValidatorOptions {
   readonly timeoutMs?: number;
@@ -416,7 +449,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
     );
 
     this.#gitExecutablePath =
-      options.gitExecutablePath ?? DEFAULT_GIT_EXECUTABLE_PATH;
+      options.gitExecutablePath ?? resolveDefaultGitExecutablePath();
     if (
       options.gitExecutablePath !== undefined &&
       !isAbsolute(options.gitExecutablePath)

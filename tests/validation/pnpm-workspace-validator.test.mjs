@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import process from "node:process";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  mkdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import {
   WorkspaceValidationError,
@@ -339,6 +356,47 @@ process.exitCode = 9;
           validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
         ),
     );
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("resolves the default git executable to an absolute path, not searched relative to the (agent-controlled) workspace cwd", async () => {
+  const workspacePath = await createGitFixture(`
+process.stdout.write("candidate-ok");
+`);
+
+  try {
+    // readHead() runs with cwd set to this same workspace. On Windows, a
+    // bare command name is searched in cwd *before* PATH by default
+    // (regardless of PATH content) - so if the default gitExecutablePath
+    // were still the bare string "git", this decoy sitting in the
+    // workspace root would run instead of the real system git. On POSIX
+    // this only happens if PATH contains a relative entry like ".", which
+    // this test doesn't attempt to simulate, but the fix (resolving to an
+    // absolute path up front) closes the gap on both platforms the same
+    // way.
+    const decoyMarker = join(workspacePath, "decoy-ran.txt");
+    const decoyName = process.platform === "win32" ? "git.cmd" : "git";
+    const decoyPath = join(workspacePath, decoyName);
+    await writeFile(
+      decoyPath,
+      process.platform === "win32"
+        ? `@echo off\r\necho ran > "${decoyMarker}"\r\nexit /b 1\r\n`
+        : `#!/bin/sh\necho ran > "${decoyMarker}"\nexit 1\n`,
+    );
+    if (process.platform !== "win32") {
+      await chmod(decoyPath, 0o755);
+    }
+
+    const candidateCommitSha = await git(workspacePath, "rev-parse", "HEAD");
+    const validator = new PnpmWorkspaceValidator();
+    const result = await validator.validate(
+      createWorkspace(workspacePath),
+      candidateCommitSha,
+    );
+    assert.match(result.stdout, /candidate-ok/);
+    assert.equal(await pathExists(decoyMarker), false);
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }
