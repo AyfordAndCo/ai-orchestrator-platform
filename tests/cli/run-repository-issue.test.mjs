@@ -78,6 +78,13 @@ test("requireArg rejects undefined and blank values", () => {
   assert.equal(requireArg("repo", "AyfordAndCo/x"), "AyfordAndCo/x");
 });
 
+test("requireArg rejects a valueless flag (parseArgs sets it to boolean true) instead of crashing on value.trim()", () => {
+  // parseArgs sets a flag with no following value to boolean `true`; a
+  // caller that only narrows the type at compile time (`as string |
+  // undefined`) still passes that `true` through at runtime.
+  assert.throws(() => requireArg("repo", true), /--repo is required/);
+});
+
 test("parseArgs reads --flag value pairs and treats a trailing/next-flag flag as boolean", () => {
   assert.deepEqual(parseArgs(["--repo", "x", "--flag"]), {
     repo: "x",
@@ -232,6 +239,14 @@ test("readOptions rejects a non-integer or non-positive --ci-timeout-ms", async 
     readOptions(baseArgs({ "ci-timeout-ms": "0" })),
     /--ci-timeout-ms must be a positive integer/,
   );
+});
+
+test("readOptions rejects a timeout flag passed with no value instead of silently defaulting to 1ms", () => {
+  // parseArgs sets a flag with nothing after it to boolean `true`;
+  // Number(true) === 1, which previously passed the ">0 integer" check
+  // silently, turning a missing value into a 1ms timeout.
+  const argv = [...baseArgs(), "--ci-timeout-ms"];
+  return assert.rejects(readOptions(argv), /--ci-timeout-ms requires a value/);
 });
 
 test("readOptions rejects a non-integer or non-positive --validation-timeout-ms", async () => {

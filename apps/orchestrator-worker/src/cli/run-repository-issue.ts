@@ -57,13 +57,34 @@ const GIT_CONFIG_ISOLATION_ENV = {
   GIT_CONFIG_GLOBAL: "/dev/null",
 };
 
+/**
+ * `parseArgs` sets a flag to boolean `true` when it's passed with no value
+ * (e.g. as the last argument, or immediately followed by another `--flag`).
+ * A plain `as string | undefined` cast at the call site doesn't change that
+ * at runtime, so callers that skip this and pass the raw value straight to
+ * `Number()` or `.trim()` get silently-wrong results (`Number(true) === 1`)
+ * or an unhandled TypeError instead of a clear validation error.
+ */
+function readStringFlag(
+  args: Record<string, string | boolean>,
+  name: string,
+): string | undefined {
+  const value = args[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 function parsePositiveIntegerArg(
   args: Record<string, string | boolean>,
   name: string,
   defaultValue: number,
 ): number {
-  const text = args[name] as string | undefined;
-  if (text === undefined) return defaultValue;
+  const text = readStringFlag(args, name);
+  if (text === undefined) {
+    if (args[name] !== undefined) {
+      throw new RangeError(`--${name} requires a value`);
+    }
+    return defaultValue;
+  }
   const value = Number(text);
   if (!Number.isInteger(value) || value <= 0) {
     throw new RangeError(`--${name} must be a positive integer`);
@@ -91,7 +112,10 @@ export interface CliOptions {
 }
 
 export function requireArg(name: string, value: string | undefined): string {
-  if (value === undefined || value.trim().length === 0) {
+  // typeof, not just === undefined: a caller may pass a value that was cast
+  // away from a wider `string | boolean` type without actually being
+  // narrowed at runtime (parseArgs sets a valueless flag to boolean true).
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new RangeError(`--${name} is required`);
   }
   return value;
@@ -171,26 +195,26 @@ export async function readOptions(
   argv: readonly string[],
 ): Promise<CliOptions> {
   const args = parseArgs(argv);
-  const repo = requireArg("repo", args.repo as string | undefined);
+  const repo = requireArg("repo", readStringFlag(args, "repo"));
   const repositoryPath = requireArg(
     "repository-path",
-    args["repository-path"] as string | undefined,
+    readStringFlag(args, "repository-path"),
   );
-  const issueText = requireArg("issue", args.issue as string | undefined);
+  const issueText = requireArg("issue", readStringFlag(args, "issue"));
   const issue = Number(issueText);
   if (!Number.isInteger(issue) || issue <= 0) {
     throw new RangeError("--issue must be a positive integer");
   }
   const workspaceRoot = requireArg(
     "workspace-root",
-    args["workspace-root"] as string | undefined,
+    readStringFlag(args, "workspace-root"),
   );
   if (!isAbsolute(workspaceRoot)) {
     throw new RangeError("--workspace-root must be an absolute path");
   }
   const containerImage = requireArg(
     "container-image",
-    args["container-image"] as string | undefined,
+    readStringFlag(args, "container-image"),
   );
   if (args["base-branch"] !== undefined) {
     throw new RangeError(
@@ -223,9 +247,9 @@ export async function readOptions(
     "agent-timeout-ms",
     DEFAULT_AGENT_TIMEOUT_MS,
   );
-  const bunImage = args["bun-image"] as string | undefined;
-  const dotnetImage = args["dotnet-image"] as string | undefined;
-  const featureBranch = args["feature-branch"] as string | undefined;
+  const bunImage = readStringFlag(args, "bun-image");
+  const dotnetImage = readStringFlag(args, "dotnet-image");
+  const featureBranch = readStringFlag(args, "feature-branch");
   if (featureBranch !== undefined) {
     validateFeatureBranch(featureBranch, issue);
   }
@@ -246,25 +270,18 @@ export async function readOptions(
     workspaceRoot,
     codexPath: await resolveExecutable(
       "codex",
-      args["codex-path"] as string | undefined,
+      readStringFlag(args, "codex-path"),
     ),
-    gitPath: await resolveExecutable(
-      "git",
-      args["git-path"] as string | undefined,
-    ),
-    ghPath: await resolveExecutable(
-      "gh",
-      args["gh-path"] as string | undefined,
-    ),
+    gitPath: await resolveExecutable("git", readStringFlag(args, "git-path")),
+    ghPath: await resolveExecutable("gh", readStringFlag(args, "gh-path")),
     dockerPath: await resolveExecutable(
       "docker",
-      args["docker-path"] as string | undefined,
+      readStringFlag(args, "docker-path"),
     ),
     containerImage,
     ...(bunImage === undefined ? {} : { bunImage }),
     ...(dotnetImage === undefined ? {} : { dotnetImage }),
-    requiredActor:
-      (args["required-actor"] as string | undefined) ?? "allanayford-dev",
+    requiredActor: readStringFlag(args, "required-actor") ?? "allanayford-dev",
     ...(featureBranch === undefined ? {} : { featureBranch }),
     ciTimeoutMs,
     validationTimeoutMs,
