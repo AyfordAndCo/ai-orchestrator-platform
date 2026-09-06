@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import process from "node:process";
 import { promisify } from "node:util";
 
 import type {
@@ -17,21 +16,20 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Global/system config isolated, ambient environment (PATH, SSH_AUTH_SOCK,
- * credential helpers) otherwise preserved - unlike GitChangePublisher's
- * fully reconstructed environment, this class needs the operator's real
- * credentials/PATH to actually authenticate a fetch. Without this, a global
- * `url.*.insteadOf` rewrite could make `fetch origin` (and the worktree
- * built from what it fetched) target a different repository than the one
- * every caller's preflight check - reading the same origin URL under this
- * same isolation - approved.
- */
-const GIT_CONFIG_ISOLATION_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-};
+// Deliberately the fully ambient environment everywhere in this file, with
+// no git config isolation: this class fetches before anything
+// agent-controlled has run, so it needs the operator's real authentication
+// setup - most commonly a global or system `credential.helper` (Git
+// Credential Manager, osxkeychain, etc.) - to succeed against a private
+// remote at all. An earlier version isolated global/system config here to
+// guard against a `url.*.insteadOf` rewrite diverging from what callers'
+// preflight checks approve, but that isolation also silently discarded
+// those credential helpers for every caller, breaking normal authenticated
+// fetches. The rewrite-divergence risk is now caught instead by callers
+// comparing an isolated read of the origin URL against this class's own
+// ambient resolution (see run-repository-issue.ts's
+// assertNoAmbientOriginRewrite) and failing closed on any mismatch, rather
+// than by discarding credentials here.
 
 interface CommandFailure extends Error {
   code?: number | string;
@@ -58,7 +56,6 @@ async function runGit(
       ["-C", repositoryPath, ...args],
       {
         encoding: "utf8",
-        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 
@@ -84,7 +81,6 @@ async function gitReferenceExists(
       ["-C", repositoryPath, "show-ref", "--verify", "--quiet", reference],
       {
         encoding: "utf8",
-        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 
@@ -122,7 +118,6 @@ async function assertSourceRepositoryExists(
       ["-C", repositoryPath, "rev-parse", "--is-inside-work-tree"],
       {
         encoding: "utf8",
-        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 

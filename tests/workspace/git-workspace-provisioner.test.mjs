@@ -161,7 +161,7 @@ test("creates an isolated workspace and returns metadata", async () => {
   }
 });
 
-test("fetches with global git config isolated, not an ambient url.*.insteadOf rewrite", async () => {
+test("fetches under the ambient environment, so a global config rewrite (e.g. from a credential setup) is honored rather than discarded", async () => {
   const repository = await createTestRepository();
   const fakeGlobalConfig = join(repository.rootPath, "fake-global-gitconfig");
   const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
@@ -190,19 +190,17 @@ test("fetches with global git config isolated, not an ambient url.*.insteadOf re
     );
     process.env.GIT_CONFIG_GLOBAL = fakeGlobalConfig;
 
-    // Prove the scenario is real first: an ambient (unisolated) fetch
-    // resolves the shorthand via the rewrite and succeeds.
-    await assert.doesNotReject(
-      execFileAsync("git", ["-C", repository.sourcePath, "fetch", "origin"]),
-    );
-
-    // GitWorkspaceProvisioner's own fetch must ignore this ambient rewrite
-    // the same way callers' preflight checks of the origin URL do, so it
-    // fails to resolve the raw (un-rewritten) shorthand rather than
-    // silently succeeding against whatever the rewrite happens to point at
-    // - which could be a different repository than every caller approved.
+    // GitWorkspaceProvisioner deliberately does not isolate global/system
+    // config (see its own module comment): it needs the operator's real
+    // credential setup, most commonly configured at the global or system
+    // level, to authenticate at all. This rewrite is a stand-in for that -
+    // preflight (and the fetch it triggers) must resolve it exactly the
+    // way an ambient, unisolated git invocation would, rather than failing
+    // to find a helper/rewrite that only exists outside local config.
     const provisioner = new GitWorkspaceProvisioner();
-    await assert.rejects(provisioner.preflight(createRequest(repository)));
+    await assert.doesNotReject(
+      provisioner.preflight(createRequest(repository)),
+    );
   } finally {
     if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
     else process.env.GIT_CONFIG_GLOBAL = previousGlobal;

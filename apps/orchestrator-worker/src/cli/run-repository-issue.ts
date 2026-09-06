@@ -349,6 +349,45 @@ export async function readPushUrls(
 }
 
 /**
+ * GitWorkspaceProvisioner's own fetch runs under the fully ambient
+ * environment (see its doc comment for why: it needs the operator's real
+ * credentials, most commonly a global or system credential.helper, to
+ * authenticate a private fetch at all - unlike GitChangePublisher, nothing
+ * agent-controlled has run yet at that point). If a global or system
+ * `url.*.insteadOf` rewrite is also active, that ambient fetch could
+ * resolve "origin" to a different repository than the one this preflight
+ * check - reading under the isolated environment matching
+ * GitChangePublisher's own - just approved. Rather than picking one
+ * resolution over the other (either breaks something: ignoring the ambient
+ * fetch's real target, or ignoring credential helpers), fail closed on any
+ * divergence between them.
+ */
+export async function assertNoAmbientOriginRewrite(
+  gitPath: string,
+  repositoryPath: string,
+  isolatedOriginUrl: string,
+): Promise<void> {
+  const { stdout } = await execFileAsync(gitPath, [
+    "-C",
+    repositoryPath,
+    "remote",
+    "get-url",
+    "origin",
+  ]);
+  if (stdout.trim() !== isolatedOriginUrl) {
+    throw new Error(
+      "Refusing to run: the origin remote resolves differently depending " +
+        "on git config scope, which usually means a global or system " +
+        "url.*.insteadOf rewrite is active. GitWorkspaceProvisioner's " +
+        "fetch uses the ambient environment (to keep normal credential " +
+        "helpers working), so it could target a different repository than " +
+        "the one --repo was just verified against. Remove the rewrite, or " +
+        "run from an environment without it.",
+    );
+  }
+}
+
+/**
  * GitChangePublisher's commit/push never pass --no-verify, so if the
  * workspace's core.hooksPath points into the tracked working tree (as
  * tools like Husky configure), an agent could modify a hook script there
@@ -560,7 +599,7 @@ export async function assertNoCommitSigning(
   );
   const signingEnabled =
     gpgSign !== undefined && /^(?:true|1|yes|on)$/i.test(gpgSign);
-  const configuredPrograms = (
+  const configuredProgramKeys = (
     await Promise.all(
       ["gpg.program", "gpg.ssh.program", "gpg.x509.program"].map(
         async (key) => {
@@ -569,16 +608,20 @@ export async function assertNoCommitSigning(
             repositoryPath,
             key,
           );
-          return value === undefined ? undefined : `${key}=${value}`;
+          return value === undefined ? undefined : key;
         },
       ),
     )
   ).filter((entry): entry is string => entry !== undefined);
 
-  if (signingEnabled || configuredPrograms.length > 0) {
+  if (signingEnabled || configuredProgramKeys.length > 0) {
+    // Report only the configured *keys*, never their values: a value here
+    // is an arbitrary operator- or config-supplied string that could embed
+    // a secret, and this error's message is printed as-is (not run through
+    // redactSecretsDeep, which only sanitizes the structured result object).
     const found = [
-      ...(signingEnabled ? ["commit.gpgSign=true"] : []),
-      ...configuredPrograms,
+      ...(signingEnabled ? ["commit.gpgSign"] : []),
+      ...configuredProgramKeys,
     ].join(", ");
     throw new Error(
       `Refusing to run: ${repositoryPath} has commit signing configured ` +
@@ -599,9 +642,19 @@ const GIT_CONFIG_BOOLEAN_PATTERN = /^(?:true|false|1|0|yes|no|on|off)$/i;
  * (a safe, explicit "use no helper"), so only a non-empty value - naming an
  * actual helper program - is collected here.
  */
-async function readActiveCredentialHelpers(
+/**
+ * Lists the *keys* of non-empty entries matching a `--get-regexp` pattern.
+ * An empty value is git's own way to clear a previously configured entry
+ * (e.g. `credential.helper=` disables all helpers), so only a non-empty
+ * value - naming an actual helper/header - counts as active. Only the key
+ * is returned, never the value: a value here can be an arbitrary
+ * operator-supplied string that could embed a secret, and callers use this
+ * to build error messages that are printed as-is.
+ */
+async function readActiveConfigKeys(
   gitPath: string,
   repositoryPath: string,
+  pattern: string,
 ): Promise<readonly string[]> {
   try {
     const { stdout } = await execFileAsync(gitPath, [
@@ -610,15 +663,20 @@ async function readActiveCredentialHelpers(
       "config",
       "--local",
       "--get-regexp",
-      "^credential\\.(.+\\.)?helper$",
+      pattern,
     ]);
     return stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
+      .filter((line) => line.length > 0)
       .filter((line) => {
         const spaceIndex = line.indexOf(" ");
         const value = spaceIndex === -1 ? "" : line.slice(spaceIndex + 1);
         return value.trim().length > 0;
+      })
+      .map((line) => {
+        const spaceIndex = line.indexOf(" ");
+        return spaceIndex === -1 ? line : line.slice(0, spaceIndex);
       });
   } catch {
     // `git config --get-regexp` exits non-zero when nothing matches.
@@ -629,11 +687,12 @@ async function readActiveCredentialHelpers(
 /**
  * `core.fsmonitor` set to anything other than a boolean is a command git
  * runs to query filesystem changes - including during the `git status`
- * GitChangePublisher.inspect() runs on the host. `core.sshCommand` is
- * always a command, used for the `git push` GitChangePublisher.push() runs.
- * `credential.helper` (or a URL-scoped `credential.<url>.helper`) is a
- * command git runs to fill/store credentials, including during the host-side
- * `git push` GitChangePublisher.push() runs. Any of these pointed at a
+ * GitChangePublisher.inspect() runs on the host. `core.sshCommand` and
+ * `core.askPass` are always commands, used for the `git push`
+ * GitChangePublisher.push() runs (askPass via `git credential fill`, which
+ * push triggers to resolve credentials). `credential.helper` (or a
+ * URL-scoped `credential.<url>.helper`) is a command git runs to fill/store
+ * credentials, during that same host-side push. Any of these pointed at a
  * tracked (agent-editable) script gets that script executed with full host
  * privileges, the same class of risk as hooks, filters, and commit signing.
  * This is a preflight mitigation, not a complete fix, for the same reason
@@ -654,26 +713,31 @@ export async function assertNoExecutableGitConfig(
     repositoryPath,
     "core.sshCommand",
   );
-  const credentialHelpers = await readActiveCredentialHelpers(
+  const askPass = await readLocalConfigValue(
     gitPath,
     repositoryPath,
+    "core.askPass",
+  );
+  const credentialHelperKeys = await readActiveConfigKeys(
+    gitPath,
+    repositoryPath,
+    "^credential\\.(.+\\.)?helper$",
   );
 
+  // Keys only below, matching readActiveConfigKeys/readLocalConfigValue's
+  // contract: never interpolate a config *value* into a message that gets
+  // printed as-is.
   const found: string[] = [];
   if (fsmonitor !== undefined && !GIT_CONFIG_BOOLEAN_PATTERN.test(fsmonitor)) {
-    found.push(`core.fsmonitor=${fsmonitor}`);
+    found.push("core.fsmonitor");
   }
   if (sshCommand !== undefined) {
-    found.push(`core.sshCommand=${sshCommand}`);
+    found.push("core.sshCommand");
   }
-  found.push(
-    ...credentialHelpers.map((line) => {
-      const spaceIndex = line.indexOf(" ");
-      return spaceIndex === -1
-        ? line
-        : `${line.slice(0, spaceIndex)}=${line.slice(spaceIndex + 1)}`;
-    }),
-  );
+  if (askPass !== undefined) {
+    found.push("core.askPass");
+  }
+  found.push(...credentialHelperKeys);
 
   if (found.length > 0) {
     throw new Error(
@@ -681,8 +745,40 @@ export async function assertNoExecutableGitConfig(
         `(${found.join(", ")}). GitChangePublisher runs git status/push on ` +
         "the host, so an agent-modified script referenced here would " +
         "execute with full host privileges. Unset it first: " +
-        "git config --local --unset core.fsmonitor / core.sshCommand / " +
-        "credential.helper as applicable.",
+        "git config --local --unset <key> for each key listed above.",
+    );
+  }
+}
+
+/**
+ * A local `http.extraHeader` / `http.<url>.extraHeader` entry (commonly used
+ * to persist an Authorization header) is a value, not a command - but the
+ * linked worktree Codex operates in shares this same local `.git/config`,
+ * so Codex can read it directly via `git config --local --get-regexp` and,
+ * with its network access, disclose or misuse it. This is a preflight
+ * mitigation, not a complete fix, for the same reason the executable-config
+ * checks are: it only catches configuration already present before the run
+ * starts.
+ */
+export async function assertNoPersistedAuthConfig(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<void> {
+  const extraHeaderKeys = await readActiveConfigKeys(
+    gitPath,
+    repositoryPath,
+    "^http\\.(.+\\.)?extraHeader$",
+  );
+
+  if (extraHeaderKeys.length > 0) {
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has persisted HTTP header ` +
+        `configuration set (${extraHeaderKeys.join(", ")}). Codex's ` +
+        "workspace shares this clone's .git/config and has network access, " +
+        "so it could read and misuse a header value here (e.g. an " +
+        "Authorization token) via `git config --local --get-regexp`. " +
+        "Unset it first: git config --local --unset <key> for each key " +
+        "listed above.",
     );
   }
 }
@@ -936,6 +1032,7 @@ async function main(): Promise<void> {
   await assertNoActiveGitFilters(options.gitPath, options.repositoryPath);
   await assertNoCommitSigning(options.gitPath, options.repositoryPath);
   await assertNoExecutableGitConfig(options.gitPath, options.repositoryPath);
+  await assertNoPersistedAuthConfig(options.gitPath, options.repositoryPath);
 
   console.log(`Fetching issue #${options.issue} from ${options.repo}...`);
   const issueSummary = await fetchIssue(
@@ -954,6 +1051,11 @@ async function main(): Promise<void> {
   );
   assertOriginMatchesRepo(originUrl, options.repo);
   assertNoEmbeddedCredentials(originUrl);
+  await assertNoAmbientOriginRewrite(
+    options.gitPath,
+    options.repositoryPath,
+    originUrl,
+  );
   const pushUrls = await readPushUrls(options.gitPath, options.repositoryPath);
   for (const pushUrl of pushUrls) {
     if (pushUrl !== originUrl) {

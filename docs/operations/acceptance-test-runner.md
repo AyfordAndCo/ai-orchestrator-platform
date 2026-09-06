@@ -47,8 +47,9 @@ one before running this.
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
 - The target repository must have no active git hooks, git filter
-  commands, commit signing, or other executable git config
-  (`core.fsmonitor`/`core.sshCommand`/`credential.helper`) configured.
+  commands, commit signing, other executable git config
+  (`core.fsmonitor`/`core.sshCommand`/`core.askPass`/`credential.helper`),
+  or persisted HTTP auth headers (`http.extraHeader`) configured.
   `GitChangePublisher`'s commit/push never pass `--no-verify`, so a
   repository that points `core.hooksPath` into its tracked tree (as Husky
   does), one with an ordinary hook file already sitting in its default
@@ -56,15 +57,22 @@ one before running this.
   command configured (e.g. by git-lfs) that a tracked `.gitattributes` entry
   can route a file through, one with `commit.gpgSign`/`gpg.program` (or its
   ssh/x509 equivalents) configured, one with `core.fsmonitor` set to a
-  command (rather than a plain boolean) or `core.sshCommand` configured, or
-  one with a `credential.helper`/`credential.<url>.helper` naming an actual
-  program, would let agent-modified code execute with full host privileges
-  during `git add`/`status`/`commit`/`push`, bypassing both the Codex and
-  validation sandboxes. This runner refuses to start if it detects any of
-  these. This is a preflight mitigation, not a complete fix — it only
-  catches something already configured before the run starts, not something
-  the agent sets up during its own execution. A complete fix belongs in
-  `GitChangePublisher` itself.
+  command (rather than a plain boolean), `core.sshCommand`, or
+  `core.askPass` configured, or one with a
+  `credential.helper`/`credential.<url>.helper` naming an actual program,
+  would let agent-modified code execute with full host privileges during
+  `git add`/`status`/`commit`/`push`, bypassing both the Codex and
+  validation sandboxes. A local `http.extraHeader`/`http.<url>.extraHeader`
+  is a different but related risk: it's a value, not a command, but Codex's
+  workspace shares this same local `.git/config` and can read it (e.g. a
+  persisted Authorization header) via `git config --local --get-regexp` and
+  misuse it over the network. This runner refuses to start if it detects
+  any of these. All of these preflight checks report only the configured
+  _keys_, never their values, since a value here is an arbitrary string
+  that could itself embed a secret. This is a preflight mitigation, not a
+  complete fix — it only catches something already configured before the
+  run starts, not something the agent sets up during its own execution. A
+  complete fix belongs in `GitChangePublisher` itself.
 - Remote URLs are read with global/system git config isolated
   (`GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL=/dev/null`), matching
   `GitChangePublisher`'s own environment: an ambient `url.*.insteadOf`
@@ -72,10 +80,15 @@ one before running this.
   expanded URL than what `GitChangePublisher` actually operates against,
   passing checks against a value nothing downstream uses.
   `GitWorkspaceProvisioner`'s own `fetch origin` during workspace creation
-  applies the same isolation (while keeping the operator's real
-  credentials/PATH, so an authenticated fetch still works) — otherwise an
-  ambient rewrite could make it build the workspace from a completely
-  different repository than the one every preflight check approved.
+  deliberately does **not** use this isolation — it runs before anything
+  agent-controlled exists, so it needs the operator's real authentication
+  setup (most commonly a global or system `credential.helper`) to succeed
+  against a private remote at all; isolating it there previously broke
+  normal authenticated fetches. Instead, this runner separately compares
+  an ambient read of the origin URL against the isolated one and refuses to
+  proceed if they diverge — which is what an active `url.*.insteadOf`
+  rewrite would cause — rather than silently trusting either resolution on
+  its own.
 - The target repository's origin (and any separately configured push URL)
   must not have credentials embedded in an HTTP(S) URL. This runner fails
   closed on that rather than only redacting it from logs: Codex's own

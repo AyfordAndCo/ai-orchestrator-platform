@@ -11,10 +11,12 @@ import test from "node:test";
 import { git } from "../support/git-fixture.mjs";
 import {
   assertNoActiveGitFilters,
+  assertNoAmbientOriginRewrite,
   assertNoCommitSigning,
   assertNoCustomGitHooks,
   assertNoEmbeddedCredentials,
   assertNoExecutableGitConfig,
+  assertNoPersistedAuthConfig,
   assertOriginMatchesRepo,
   buildInstruction,
   deriveFeatureBranch,
@@ -725,10 +727,7 @@ test("assertNoCommitSigning refuses to run when commit.gpgSign is enabled locall
   try {
     await git(root, "init", "-b", "main");
     await git(root, "config", "--local", "commit.gpgSign", "true");
-    await assert.rejects(
-      assertNoCommitSigning("git", root),
-      /commit\.gpgSign=true/,
-    );
+    await assert.rejects(assertNoCommitSigning("git", root), /commit\.gpgSign/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -739,10 +738,14 @@ test("assertNoCommitSigning refuses to run when a gpg program is configured loca
   try {
     await git(root, "init", "-b", "main");
     await git(root, "config", "--local", "gpg.program", "/workspace/fake-gpg");
-    await assert.rejects(
-      assertNoCommitSigning("git", root),
-      /gpg\.program=\/workspace\/fake-gpg/,
-    );
+    await assert.rejects(assertNoCommitSigning("git", root), /gpg\.program/);
+    // The configured value must never appear in the thrown message: it's
+    // an arbitrary string that could embed a secret, and this error is
+    // printed as-is rather than run through redactSecretsDeep.
+    await assert.rejects(assertNoCommitSigning("git", root), (error) => {
+      assert.ok(!error.message.includes("/workspace/fake-gpg"));
+      return true;
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -782,8 +785,12 @@ test("assertNoExecutableGitConfig refuses to run when core.fsmonitor is a comman
     );
     await assert.rejects(
       assertNoExecutableGitConfig("git", root),
-      /core\.fsmonitor=\.\/tracked-script\.sh/,
+      /core\.fsmonitor/,
     );
+    await assert.rejects(assertNoExecutableGitConfig("git", root), (error) => {
+      assert.ok(!error.message.includes("tracked-script.sh"));
+      return true;
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -796,7 +803,27 @@ test("assertNoExecutableGitConfig refuses to run when core.sshCommand is configu
     await git(root, "config", "--local", "core.sshCommand", "./tracked-ssh.sh");
     await assert.rejects(
       assertNoExecutableGitConfig("git", root),
-      /core\.sshCommand=\.\/tracked-ssh\.sh/,
+      /core\.sshCommand/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig refuses to run when core.askPass is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "core.askPass",
+      "./tracked-askpass.sh",
+    );
+    await assert.rejects(
+      assertNoExecutableGitConfig("git", root),
+      /core\.askPass/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -816,8 +843,12 @@ test("assertNoExecutableGitConfig refuses to run when credential.helper is confi
     );
     await assert.rejects(
       assertNoExecutableGitConfig("git", root),
-      /credential\.helper=!\.\/tracked-helper\.sh/,
+      /credential\.helper/,
     );
+    await assert.rejects(assertNoExecutableGitConfig("git", root), (error) => {
+      assert.ok(!error.message.includes("tracked-helper.sh"));
+      return true;
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -836,7 +867,7 @@ test("assertNoExecutableGitConfig refuses to run when a URL-scoped credential.<u
     );
     await assert.rejects(
       assertNoExecutableGitConfig("git", root),
-      /credential\.https:\/\/github\.com\.helper=!\.\/tracked-helper\.sh/,
+      /credential\.https:\/\/github\.com\.helper/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -850,6 +881,102 @@ test("assertNoExecutableGitConfig passes when credential.helper is explicitly cl
     await git(root, "config", "--local", "--add", "credential.helper", "");
     await assert.doesNotReject(assertNoExecutableGitConfig("git", root));
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoPersistedAuthConfig passes when no http.extraHeader is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-authconfig-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await assert.doesNotReject(assertNoPersistedAuthConfig("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoPersistedAuthConfig refuses to run when http.extraHeader is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-authconfig-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "http.extraHeader",
+      "Authorization: Bearer secret-token",
+    );
+    await assert.rejects(
+      assertNoPersistedAuthConfig("git", root),
+      /http\.extraHeader/i,
+    );
+    await assert.rejects(assertNoPersistedAuthConfig("git", root), (error) => {
+      assert.ok(!error.message.includes("secret-token"));
+      return true;
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoPersistedAuthConfig refuses to run when a URL-scoped http.<url>.extraHeader is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-authconfig-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "http.https://github.com.extraHeader",
+      "Authorization: Bearer secret-token",
+    );
+    await assert.rejects(
+      assertNoPersistedAuthConfig("git", root),
+      /http\.https:\/\/github\.com\.extraHeader/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoAmbientOriginRewrite passes when the ambient and isolated origin URLs match", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-ambient-rewrite-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "https://github.com/o/r.git");
+    await assert.doesNotReject(
+      assertNoAmbientOriginRewrite("git", root, "https://github.com/o/r.git"),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoAmbientOriginRewrite refuses to run when a global rewrite makes the ambient origin diverge from the isolated one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-ambient-rewrite-"));
+  const fakeGlobalConfig = join(root, "fake-global-gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "redirect-test:");
+    const escapedRoot = root.replace(/\\/g, "\\\\");
+    await writeFile(
+      fakeGlobalConfig,
+      `[url "${escapedRoot}/other.git"]\n\tinsteadOf = redirect-test:\n`,
+    );
+    process.env.GIT_CONFIG_GLOBAL = fakeGlobalConfig;
+
+    // The isolated read (matching GitChangePublisher's own environment)
+    // sees the raw shorthand, unaffected by the ambient rewrite above.
+    const isolatedOriginUrl = await readOriginUrl("git", root);
+    assert.equal(isolatedOriginUrl, "redirect-test:");
+
+    await assert.rejects(
+      assertNoAmbientOriginRewrite("git", root, isolatedOriginUrl),
+    );
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await rm(root, { recursive: true, force: true });
   }
 });
