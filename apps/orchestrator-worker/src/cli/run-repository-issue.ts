@@ -11,8 +11,18 @@
  * for a "Ready" label. It exists to answer one question - do the already
  * built and tested primitives actually work together against a real
  * repository - not to be the production trigger.
+ *
+ * Validation always runs in the configured container. AGENTS.md forbids
+ * granting an agent unrestricted host access; there is deliberately no
+ * escape hatch here that runs an agent-modified validate script directly on
+ * the operator's machine.
+ *
+ * Workspace provisioning (GitWorkspaceProvisioner) always invokes "git" via
+ * PATH regardless of --git-path; that option only configures the git
+ * executable used for the later commit/push boundary (GitChangePublisher).
+ * If git is not on PATH, provisioning fails before that boundary is reached.
  */
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import process from "node:process";
@@ -23,30 +33,33 @@ import { executeRepositoryRun } from "../run/execute-repository-run.js";
 
 const execFileAsync = promisify(execFile);
 
-interface CliOptions {
+const DEFAULT_CI_TIMEOUT_MS = 20 * 60 * 1000;
+
+export interface CliOptions {
   readonly repo: string;
   readonly repositoryPath: string;
   readonly issue: number;
-  readonly baseBranch: string;
   readonly workspaceRoot: string;
   readonly codexPath: string;
   readonly gitPath: string;
   readonly ghPath: string;
+  readonly dockerPath: string;
+  readonly containerImage: string;
   readonly requiredActor: string;
-  readonly containerExecutablePath?: string;
-  readonly containerImage?: string;
-  readonly allowHostValidation: boolean;
   readonly featureBranch: string;
+  readonly ciTimeoutMs: number;
 }
 
-function requireArg(name: string, value: string | undefined): string {
+export function requireArg(name: string, value: string | undefined): string {
   if (value === undefined || value.trim().length === 0) {
     throw new RangeError(`--${name} is required`);
   }
   return value;
 }
 
-function parseArgs(argv: readonly string[]): Record<string, string | boolean> {
+export function parseArgs(
+  argv: readonly string[],
+): Record<string, string | boolean> {
   const args: Record<string, string | boolean> = {};
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -63,9 +76,10 @@ function parseArgs(argv: readonly string[]): Record<string, string | boolean> {
   return args;
 }
 
-async function resolveExecutable(
+export async function resolveExecutable(
   name: string,
   explicit: string | undefined,
+  execFileImplementation: typeof execFileAsync = execFileAsync,
 ): Promise<string> {
   if (explicit !== undefined) {
     if (!isAbsolute(explicit)) {
@@ -75,7 +89,7 @@ async function resolveExecutable(
   }
   const finder = process.platform === "win32" ? "where" : "which";
   try {
-    const { stdout } = await execFileAsync(finder, [name]);
+    const { stdout } = await execFileImplementation(finder, [name]);
     const resolved = stdout.split(/\r?\n/)[0]?.trim();
     if (resolved === undefined || resolved.length === 0) {
       throw new Error("empty result");
@@ -89,7 +103,9 @@ async function resolveExecutable(
   }
 }
 
-async function readOptions(argv: readonly string[]): Promise<CliOptions> {
+export async function readOptions(
+  argv: readonly string[],
+): Promise<CliOptions> {
   const args = parseArgs(argv);
   const repo = requireArg("repo", args.repo as string | undefined);
   const repositoryPath = requireArg(
@@ -108,22 +124,39 @@ async function readOptions(argv: readonly string[]): Promise<CliOptions> {
   if (!isAbsolute(workspaceRoot)) {
     throw new RangeError("--workspace-root must be an absolute path");
   }
-  const allowHostValidation = args["allow-host-validation"] === true;
-  const containerExecutablePath = args["docker-path"] as string | undefined;
-  const containerImage = args["container-image"] as string | undefined;
-  if (!allowHostValidation && containerImage === undefined) {
+  const containerImage = requireArg(
+    "container-image",
+    args["container-image"] as string | undefined,
+  );
+  if (args["base-branch"] !== undefined) {
     throw new RangeError(
-      "--container-image is required unless --allow-host-validation is passed " +
-        "(production validation requires the restricted container boundary; " +
-        "host execution is a deliberate, explicit opt-in for a one-off test run).",
+      "--base-branch is not supported: the underlying pipeline always " +
+        "publishes and verifies the PR against main (GhCliPullRequestPublisher " +
+        "requires baseBranch === 'main'), so this repository's base branch " +
+        "must already be main.",
     );
+  }
+  if (args["allow-host-validation"] !== undefined) {
+    throw new RangeError(
+      "--allow-host-validation is not supported: AGENTS.md forbids granting " +
+        "an agent unrestricted host access. Validation always runs in the " +
+        "configured container; publish a pinned validation image and pass " +
+        "--container-image instead.",
+    );
+  }
+  const ciTimeoutText = args["ci-timeout-ms"] as string | undefined;
+  let ciTimeoutMs = DEFAULT_CI_TIMEOUT_MS;
+  if (ciTimeoutText !== undefined) {
+    ciTimeoutMs = Number(ciTimeoutText);
+    if (!Number.isInteger(ciTimeoutMs) || ciTimeoutMs <= 0) {
+      throw new RangeError("--ci-timeout-ms must be a positive integer");
+    }
   }
 
   return {
     repo,
     repositoryPath,
     issue,
-    baseBranch: (args["base-branch"] as string | undefined) ?? "main",
     workspaceRoot,
     codexPath: await resolveExecutable(
       "codex",
@@ -137,15 +170,16 @@ async function readOptions(argv: readonly string[]): Promise<CliOptions> {
       "gh",
       args["gh-path"] as string | undefined,
     ),
+    dockerPath: await resolveExecutable(
+      "docker",
+      args["docker-path"] as string | undefined,
+    ),
+    containerImage,
     requiredActor:
       (args["required-actor"] as string | undefined) ?? "allanayford-dev",
-    ...(containerExecutablePath === undefined
-      ? {}
-      : { containerExecutablePath }),
-    ...(containerImage === undefined ? {} : { containerImage }),
-    allowHostValidation,
     featureBranch:
       (args["feature-branch"] as string | undefined) ?? `agent/issue-${issue}`,
+    ciTimeoutMs,
   };
 }
 
@@ -154,7 +188,7 @@ interface IssueSummary {
   readonly body: string;
 }
 
-async function fetchIssue(
+export async function fetchIssue(
   ghPath: string,
   repo: string,
   issue: number,
@@ -172,7 +206,21 @@ async function fetchIssue(
   return parsed;
 }
 
-function buildInstruction(issue: number, summary: IssueSummary): string {
+export async function readOriginUrl(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<string> {
+  const { stdout } = await execFileAsync(gitPath, [
+    "-C",
+    repositoryPath,
+    "remote",
+    "get-url",
+    "origin",
+  ]);
+  return stdout.trim();
+}
+
+export function buildInstruction(issue: number, summary: IssueSummary): string {
   return [
     `Implement GitHub issue #${issue}: ${summary.title}`,
     "",
@@ -193,19 +241,18 @@ async function main(): Promise<void> {
   );
   const instruction = buildInstruction(options.issue, issueSummary);
 
+  const originUrl = await readOriginUrl(
+    options.gitPath,
+    options.repositoryPath,
+  );
+
   const runId = randomUUID();
   const workspacePath = `${options.workspaceRoot}/run-${runId}`;
 
   console.log(`Run ${runId}`);
   console.log(`Feature branch: ${options.featureBranch}`);
   console.log(`Workspace: ${workspacePath}`);
-  if (options.allowHostValidation) {
-    console.warn(
-      "WARNING: running validation on the host, not in a container. " +
-        "The target repository's validate script (as modified by the " +
-        "agent) will execute unsandboxed on this machine.",
-    );
-  }
+  console.log(`Origin: ${originUrl}`);
 
   const result = await executeRepositoryRun(
     {
@@ -215,7 +262,7 @@ async function main(): Promise<void> {
       workspace: {
         issueId: String(options.issue),
         repositoryPath: options.repositoryPath,
-        baseBranch: options.baseBranch,
+        baseBranch: "main",
         featureBranch: options.featureBranch,
         workspacePath,
       },
@@ -226,17 +273,15 @@ async function main(): Promise<void> {
         executablePath: options.codexPath,
         allowedWorkspaceRoot: options.workspaceRoot,
       },
-      validation: options.allowHostValidation
-        ? { spawnImplementation: spawn }
-        : {
-            container: {
-              executablePath: options.containerExecutablePath!,
-              image: options.containerImage!,
-            },
-          },
+      validation: {
+        container: {
+          executablePath: options.dockerPath,
+          image: options.containerImage,
+        },
+      },
       gitPublication: {
         gitExecutablePath: options.gitPath,
-        expectedOriginUrl: `https://github.com/${options.repo}.git`,
+        expectedOriginUrl: originUrl,
       },
       pullRequestPublication: {
         executablePath: options.ghPath,
@@ -244,6 +289,7 @@ async function main(): Promise<void> {
       },
       ciObservation: {
         executablePath: options.ghPath,
+        timeoutMs: options.ciTimeoutMs,
       },
     },
   );
@@ -256,7 +302,13 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+const isMainModule =
+  process.argv[1] !== undefined &&
+  import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`;
+
+if (isMainModule) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
