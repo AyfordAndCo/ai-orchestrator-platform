@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, realpath, rm } from "node:fs/promises";
 import {
   basename,
   dirname,
   isAbsolute,
+  join,
   relative,
   resolve,
   sep,
@@ -103,6 +105,50 @@ async function checkedGit(
 ): Promise<string> {
   try {
     return await runGit(executablePath, cwd, args);
+  } catch (error) {
+    const failure = error as ProcessFailure;
+    const stdout = bounded(failure.stdout);
+    const stderr = bounded(failure.stderr);
+    throw new GitBoundaryError(gitBoundaryErrorCodes[code], message, {
+      ...(stdout === undefined ? {} : { stdout }),
+      ...(stderr === undefined ? {} : { stderr }),
+    });
+  }
+}
+
+/**
+ * Deliberately the operator's own ambient environment - the opposite of
+ * createGitEnvironment()'s isolation. Used only for the two publish-boundary
+ * steps (clone from origin, push to origin) that need real authentication
+ * (SSH agent, Git Credential Manager, a normal HTTPS credential helper), and
+ * only ever against the clean clone this class creates itself in push()
+ * below - never against `root` (the agent's own worktree, whose local
+ * config it could have tampered with).
+ */
+async function runGitAmbient(
+  executablePath: string,
+  cwd: string,
+  args: readonly string[],
+): Promise<string> {
+  const { stdout } = await execFileAsync(executablePath, [...args], {
+    cwd,
+    encoding: "utf8",
+    env: process.env,
+    maxBuffer: MAX_OUTPUT,
+    timeout: TIMEOUT_MS,
+  });
+  return stdout;
+}
+
+async function checkedGitAmbient(
+  executablePath: string,
+  cwd: string,
+  args: readonly string[],
+  code: keyof typeof gitBoundaryErrorCodes,
+  message: string,
+): Promise<string> {
+  try {
+    return await runGitAmbient(executablePath, cwd, args);
   } catch (error) {
     const failure = error as ProcessFailure;
     const stdout = bounded(failure.stdout);
@@ -337,19 +383,29 @@ function sortedUnique(paths: readonly string[]): string[] {
 export interface GitChangePublisherOptions {
   readonly gitExecutablePath: string;
   readonly expectedOriginUrl: string;
+  /**
+   * Absolute path to an empty, writable directory this class fully owns for
+   * staging publish clones (see push() below). Never the agent's own
+   * workspace or anywhere it can reach.
+   */
+  readonly cleanCloneRoot: string;
 }
 
 export class GitChangePublisher implements GitPublisher {
   readonly #gitExecutablePath: string;
   readonly #expectedOriginUrl: string;
+  readonly #cleanCloneRoot: string;
 
   constructor(options: GitChangePublisherOptions) {
     if (!isAbsolute(options.gitExecutablePath))
       throw new RangeError("gitExecutablePath must be an absolute path");
     if (options.expectedOriginUrl.trim().length === 0)
       throw new RangeError("expectedOriginUrl must not be empty");
+    if (!isAbsolute(options.cleanCloneRoot))
+      throw new RangeError("cleanCloneRoot must be an absolute path");
     this.#gitExecutablePath = options.gitExecutablePath;
     this.#expectedOriginUrl = options.expectedOriginUrl;
+    this.#cleanCloneRoot = options.cleanCloneRoot;
   }
 
   async inspect(
@@ -534,13 +590,56 @@ export class GitChangePublisher implements GitPublisher {
         "Workspace remote does not match approved repository remote",
       );
     const branch = request.workspace.featureBranch;
-    await checkedGit(
-      this.#gitExecutablePath,
-      root,
-      ["push", REMOTE_NAME, `${request.commit.commitSha}:refs/heads/${branch}`],
-      "GIT_PUSH_FAILED",
-      "Unable to push reviewed feature branch",
+
+    // Push from a fresh, independent clone rather than from `root`: a
+    // linked worktree (which `root` is) shares ONE local .git/config with
+    // its main worktree, so anything the agent set there via
+    // `git config --local` (core.sshCommand, core.askPass,
+    // credential.helper, http.extraHeader, ...) would apply to a push run
+    // from `root` too. A genuinely separate `git clone` starts with git's
+    // own defaults - no hooks, no custom credential helper, nothing
+    // inherited - so it can safely use the operator's real ambient
+    // environment (their actual SSH agent / credential manager) instead of
+    // the isolated one every other call in this file uses.
+    const cleanClonePath = join(
+      this.#cleanCloneRoot,
+      `publish-${randomUUID()}`,
     );
+    try {
+      await mkdir(this.#cleanCloneRoot, { recursive: true });
+    } catch {
+      throw new GitBoundaryError(
+        gitBoundaryErrorCodes.GIT_PUSH_FAILED,
+        "Unable to create the clean clone staging directory",
+      );
+    }
+    try {
+      await checkedGitAmbient(
+        this.#gitExecutablePath,
+        this.#cleanCloneRoot,
+        ["clone", this.#expectedOriginUrl, cleanClonePath],
+        "GIT_PUSH_FAILED",
+        "Unable to stage a clean clone for publication",
+      );
+      await checkedGit(
+        this.#gitExecutablePath,
+        cleanClonePath,
+        ["fetch", root, `${request.commit.commitSha}:refs/heads/${branch}`],
+        "GIT_PUSH_FAILED",
+        "Unable to fetch the reviewed commit into the clean clone",
+      );
+      await checkedGitAmbient(
+        this.#gitExecutablePath,
+        cleanClonePath,
+        ["push", REMOTE_NAME, branch],
+        "GIT_PUSH_FAILED",
+        "Unable to push reviewed feature branch",
+      );
+    } finally {
+      await rm(cleanClonePath, { recursive: true, force: true }).catch(() => {
+        // Best-effort cleanup - never mask the real push result/error.
+      });
+    }
     return { ...request.commit, pushedBranch: branch, remote: request.remote };
   }
 }

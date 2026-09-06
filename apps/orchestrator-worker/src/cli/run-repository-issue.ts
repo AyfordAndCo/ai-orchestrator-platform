@@ -1172,6 +1172,11 @@ async function main(): Promise<void> {
       gitPublication: {
         gitExecutablePath: options.gitPath,
         expectedOriginUrl: originUrl,
+        // A sibling of the agent's own run-<id> workspace under the same
+        // --workspace-root, not the workspace itself: Codex's
+        // allowedWorkspaceRoot already scopes it to its own run
+        // subdirectory, so this publish/ directory isn't agent-reachable.
+        cleanCloneRoot: `${options.workspaceRoot}/publish`,
       },
       pullRequestPublication: {
         executablePath: options.ghPath,

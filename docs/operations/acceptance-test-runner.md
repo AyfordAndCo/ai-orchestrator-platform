@@ -61,18 +61,20 @@ one before running this.
   `core.askPass` configured, or one with a
   `credential.helper`/`credential.<url>.helper` naming an actual program,
   would let agent-modified code execute with full host privileges during
-  `git add`/`status`/`commit`/`push`, bypassing both the Codex and
-  validation sandboxes. A local `http.extraHeader`/`http.<url>.extraHeader`
-  is a different but related risk: it's a value, not a command, but Codex's
+  `git add`/`status`/`commit`, bypassing both the Codex and validation
+  sandboxes. A local `http.extraHeader`/`http.<url>.extraHeader` is a
+  different but related risk: it's a value, not a command, but Codex's
   workspace shares this same local `.git/config` and can read it (e.g. a
   persisted Authorization header) via `git config --local --get-regexp` and
   misuse it over the network. This runner refuses to start if it detects
   any of these. All of these preflight checks report only the configured
   _keys_, never their values, since a value here is an arbitrary string
   that could itself embed a secret. This is a preflight mitigation, not a
-  complete fix — it only catches something already configured before the
-  run starts, not something the agent sets up during its own execution. A
-  complete fix belongs in `GitChangePublisher` itself.
+  complete fix for `commit()` — it only catches something already
+  configured before the run starts, not something the agent sets up during
+  its own execution. `push()` no longer runs against this config at all
+  (see the push-authentication bullet below), so for `push` specifically
+  these checks are defense-in-depth rather than load-bearing.
 - Remote URLs are read with global/system git config isolated
   (`GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL=/dev/null`), matching
   `GitChangePublisher`'s own environment: an ambient `url.*.insteadOf`
@@ -109,21 +111,32 @@ one before running this.
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.
-- **`git push` authentication is currently an unsolved prerequisite, not
-  something this runner can arrange for you.** `GitChangePublisher` builds a
-  completely explicit environment for its `git` subprocesses that excludes
-  `SSH_AUTH_SOCK` and any credential-helper configuration, so neither an SSH
-  agent nor a normally-configured HTTPS credential helper works here, and it
-  exposes no option to inject a credential. An earlier version of this
-  runner worked around that by embedding a token in the origin remote URL,
-  but that writes the credential into the repository's shared `.git/config`
-  — readable by the agent's own workspace, which also has network access —
-  before the intended push ever happens. That approach was reverted as a
-  real credential-exfiltration risk rather than shipped (see
+- **`git push` authentication works with whatever the operator's own ambient
+  git setup already supports** — an SSH agent, Git Credential Manager, or a
+  normal HTTPS credential helper — with no extra flags or embedded tokens
+  needed. `GitChangePublisher.push()` never runs `git push` against the
+  agent's own worktree (whose local `.git/config` the agent could have
+  tampered with); instead it clones the verified origin URL into a fresh,
+  independent directory that Codex never touches, fetches the reviewed
+  commit into that clone from the worktree (a pure local object transfer,
+  no auth needed and no execution of the worktree's config), and pushes
+  from there using the real ambient environment. A clone the agent never
+  touched starts with git's own defaults — no hooks, no custom credential
+  helper, nothing inherited — so it can safely use real credentials where
+  the isolated environment used everywhere else in `GitChangePublisher`
+  deliberately can't. An earlier version of this runner instead worked
+  around the missing authentication by embedding a token in the origin
+  remote URL, but that wrote the credential into the repository's shared
+  `.git/config` — readable by the agent's own workspace, which also has
+  network access — before the intended push ever happened. That approach
+  was reverted as a real credential-exfiltration risk rather than shipped;
+  the clean-clone push boundary is the fix that replaced it (see
   [#33](https://github.com/AyfordAndCo/ai-orchestrator-platform/issues/33)).
-  Until `GitChangePublisher` supports a safe way to authenticate, only a
-  target repository your `git` installation can already push to without
-  any of the above (rare in practice) will complete a real run here.
+  One tradeoff: a `pre-push` hook (or any other hook) configured on the
+  agent's workspace no longer runs during the actual push, since it never
+  executes in that directory — a receiving-side hook on the remote itself
+  (`pre-receive`/`update`/`post-receive`) still runs for every push
+  regardless of which clone it comes from, if that enforcement matters.
 
 Note: workspace provisioning (`GitWorkspaceProvisioner`) always invokes
 `git` via `PATH` regardless of `--git-path` — that option only configures

@@ -5,6 +5,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   symlink,
@@ -72,6 +73,7 @@ async function fixture() {
   return {
     root,
     remote,
+    cleanCloneRoot: join(root, "clean-clone-root"),
     workspace: {
       issueId: "ALL-316",
       repositoryPath: source,
@@ -80,6 +82,14 @@ async function fixture() {
       featureBranch: "allan/all-316-test",
     },
   };
+}
+
+async function cleanCloneEntries(value) {
+  try {
+    return await readdir(value.cleanCloneRoot);
+  } catch {
+    return [];
+  }
 }
 
 async function rejectsCode(action, code) {
@@ -94,6 +104,7 @@ function publisher(value, overrides = {}) {
   return new GitChangePublisher({
     gitExecutablePath,
     expectedOriginUrl: value.remote,
+    cleanCloneRoot: value.cleanCloneRoot,
     ...overrides,
   });
 }
@@ -223,9 +234,10 @@ test("stages exact approved paths, commits deterministically, and pushes one exp
     await git(value.remote, "rev-parse", "refs/heads/develop"),
     commit.commitSha,
   );
+  assert.deepEqual(await cleanCloneEntries(value), []);
 });
 
-test("runs commit and push hooks without hook-bypass arguments", async (t) => {
+test("runs the commit hook without a hook-bypass argument; push never sees the workspace's local hooks", async (t) => {
   const value = await fixture();
   t.after(() => rm(value.root, { recursive: true, force: true }));
   const root = value.workspace.workspacePath;
@@ -260,7 +272,11 @@ test("runs commit and push hooks without hook-bypass arguments", async (t) => {
     remote: "origin",
   });
 
-  assert.equal(await readFile(hookLog, "utf8"), "pre-commit\npre-push\n");
+  // commit() still runs in the workspace, so its pre-commit hook fires
+  // unbypassed. push() now runs entirely inside a clean clone that never
+  // inherits the workspace's core.hooksPath, so the pre-push hook configured
+  // here - on the workspace, not the clean clone - never runs at all.
+  assert.equal(await readFile(hookLog, "utf8"), "pre-commit\n");
 });
 
 test("ignores generated trees while retaining ignored secret protection", async (t) => {
@@ -359,6 +375,7 @@ test("requires an absolute fixed Git executable and ignores inherited Git redire
       new GitChangePublisher({
         gitExecutablePath: "git",
         expectedOriginUrl: value.remote,
+        cleanCloneRoot: value.cleanCloneRoot,
       }),
     /absolute path/,
   );
@@ -512,4 +529,52 @@ test("non-fast-forward publication fails without rewriting local or remote histo
     await git(value.remote, "rev-parse", "refs/heads/allan/all-316-test"),
     remoteBefore,
   );
+  assert.deepEqual(await cleanCloneEntries(value), []);
+});
+
+test("push never executes the agent workspace's local git config (hooks, credential.helper)", async (t) => {
+  const value = await fixture();
+  t.after(() => rm(value.root, { recursive: true, force: true }));
+  const root = value.workspace.workspacePath;
+  const hooks = join(value.root, "push-hooks");
+  const marker = join(value.root, "decoy-ran.txt");
+  await mkdir(hooks);
+  await writeFile(
+    join(hooks, "pre-push"),
+    `#!/bin/sh\nprintf 'ran\\n' >> '${marker}'\n`,
+  );
+  await chmod(join(hooks, "pre-push"), 0o755);
+  // core.hooksPath is applied by every git invocation with cwd=root - unlike
+  // credential.helper/core.sshCommand, it fires for a local-path remote too,
+  // so it's a reliable witness for "did any git command run against root's
+  // config" rather than a decoy that would never fire either way.
+  await git(root, "config", "core.hooksPath", hooks);
+  await git(
+    root,
+    "config",
+    "credential.helper",
+    `!printf 'ran\\n' >> '${marker}'; false`,
+  );
+  await writeFile(join(root, "witness.txt"), "witness\n");
+
+  const changePublisher = publisher(value);
+  const inspection = await changePublisher.inspect({
+    workspace: value.workspace,
+  });
+  const commit = await changePublisher.commit({
+    workspace: value.workspace,
+    inspection,
+  });
+  const published = await changePublisher.push({
+    workspace: value.workspace,
+    commit,
+    remote: "origin",
+  });
+
+  assert.equal(published.pushedBranch, "allan/all-316-test");
+  assert.equal(
+    await git(value.remote, "rev-parse", "refs/heads/allan/all-316-test"),
+    commit.commitSha,
+  );
+  await assert.rejects(readFile(marker, "utf8"));
 });
