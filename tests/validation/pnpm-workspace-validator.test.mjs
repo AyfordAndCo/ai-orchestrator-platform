@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { execFile } from "node:child_process";
 import process from "node:process";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { promisify } from "node:util";
 
 import {
   WorkspaceValidationError,
@@ -14,9 +12,7 @@ import {
 } from "../../dist/packages/domain/src/validation/index.js";
 
 import { PnpmWorkspaceValidator } from "../../dist/packages/integrations/src/validation/index.js";
-import { sanitizedGitEnv } from "../support/git-fixture.mjs";
-
-const execFileAsync = promisify(execFile);
+import { git } from "../support/git-fixture.mjs";
 
 async function createFixture(validationSource) {
   const root = await mkdtemp(join(tmpdir(), "all-313-validation-"));
@@ -49,16 +45,6 @@ function createWorkspace(workspacePath) {
     featureBranch: "allan/all-313-test",
     workspacePath,
   };
-}
-
-async function git(cwd, ...args) {
-  return (
-    await execFileAsync("/usr/bin/git", args, {
-      cwd,
-      encoding: "utf8",
-      env: sanitizedGitEnv(),
-    })
-  ).stdout.trim();
 }
 
 async function createGitFixture(validationSource) {
@@ -195,7 +181,15 @@ test("rejects a symlink workspace path", async () => {
   const link = join(root, "workspace-link");
 
   await mkdir(target);
-  await symlink(target, link, "dir");
+  // A real directory symlink needs an elevated privilege (Developer Mode or
+  // admin) on Windows; an NTFS junction is also a reparse point lstat()
+  // reports the same way (not a real directory) but doesn't need that
+  // privilege, so it exercises the same rejection path on every platform.
+  await symlink(
+    target,
+    link,
+    process.platform === "win32" ? "junction" : "dir",
+  );
 
   try {
     const validator = new PnpmWorkspaceValidator();
@@ -286,13 +280,20 @@ process.stdout.write("should-not-run");
       environment: { PATH: "" },
     });
 
+    // On Windows, the bare-"pnpm" fallback (see createValidationProcess)
+    // has to go through cmd.exe to resolve a .cmd shim, so a missing pnpm
+    // surfaces as a normal nonzero-exit shell failure (VALIDATION_FAILED)
+    // rather than a spawn-level error (VALIDATION_LAUNCH_FAILED) - both are
+    // stable, recognizable signals that validation could not run pnpm; only
+    // the OS-appropriate one differs.
+    const expectedCode =
+      process.platform === "win32"
+        ? validationErrorCodes.VALIDATION_FAILED
+        : validationErrorCodes.VALIDATION_LAUNCH_FAILED;
+
     await assert.rejects(
       validator.validate(createWorkspace(workspacePath)),
-      (error) =>
-        assertValidationError(
-          error,
-          validationErrorCodes.VALIDATION_LAUNCH_FAILED,
-        ),
+      (error) => assertValidationError(error, expectedCode),
     );
   } finally {
     if (originalPath === undefined) {
@@ -326,7 +327,7 @@ process.stdout.write("candidate-ok");
       join(workspacePath, "validate.mjs"),
       `
 import { execFileSync } from "node:child_process";
-execFileSync("/usr/bin/git", ["commit", "--allow-empty", "-m", "validation-mutation"]);
+execFileSync("git", ["commit", "--allow-empty", "-m", "validation-mutation"]);
 process.exitCode = 9;
 `,
     );

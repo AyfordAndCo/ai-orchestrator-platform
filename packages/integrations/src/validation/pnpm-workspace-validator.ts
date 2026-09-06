@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
@@ -15,7 +15,13 @@ import type { Workspace } from "../../../domain/src/workspace/index.js";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
-const DEFAULT_GIT_EXECUTABLE_PATH = "/usr/bin/git";
+// Deliberately a bare command, resolved via PATH by the OS at spawn time -
+// GitWorkspaceProvisioner already does the same for the same reason: an
+// absolute default would have to pick one platform's install layout (this
+// was previously hardcoded to "/usr/bin/git", which never exists on
+// Windows). An explicit override is still required to be absolute below,
+// since that's operator-supplied and pinning it is the point.
+const DEFAULT_GIT_EXECUTABLE_PATH = "git";
 const execFileAsync = promisify(execFile);
 
 export interface PnpmWorkspaceValidatorOptions {
@@ -27,6 +33,7 @@ export interface PnpmWorkspaceValidatorOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly sandbox?: ValidationSandboxOptions;
   readonly container?: ValidationContainerOptions;
+  readonly spawnImplementation?: typeof spawn;
 }
 
 export interface ValidationSandboxOptions {
@@ -76,6 +83,17 @@ function sanitizeOutput(value: string): string {
     );
 }
 
+// On Windows, pnpm is normally a .cmd shim, and launching one - even with
+// shell:false - makes Node hand off to cmd.exe internally, which needs
+// SystemRoot/ComSpec/PATHEXT to run at all (Windows itself, not just pnpm,
+// relies on %SystemRoot% to resolve its own system DLLs). These are plumbing
+// needed to spawn anything on Windows, not secrets, so allow-listing them
+// only on win32 doesn't loosen what the POSIX CI path already allows.
+const WINDOWS_ALLOWED_ENVIRONMENT_KEYS =
+  process.platform === "win32"
+    ? ["ComSpec", "PATHEXT", "SystemRoot", "TEMP", "TMP", "USERPROFILE"]
+    : [];
+
 function validationEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv {
@@ -90,6 +108,7 @@ function validationEnvironment(
     "PNPM_HOME",
     "TMPDIR",
     "USER",
+    ...WINDOWS_ALLOWED_ENVIRONMENT_KEYS,
   ];
   return Object.fromEntries(
     allowed.flatMap((name) =>
@@ -135,9 +154,10 @@ function createValidationProcess(
   sandbox: ValidationSandboxOptions | undefined,
   container: ValidationContainerOptions | undefined,
   environment: NodeJS.ProcessEnv | undefined,
+  spawnImplementation: typeof spawn,
 ) {
   if (container !== undefined) {
-    return spawn(
+    return spawnImplementation(
       container.executablePath,
       [
         "run",
@@ -182,7 +202,7 @@ function createValidationProcess(
     const pnpmExecPath = (environment ?? process.env).npm_execpath;
 
     if (pnpmExecPath !== undefined && pnpmExecPath.trim().length > 0) {
-      return spawn(process.execPath, [pnpmExecPath, "validate"], {
+      return spawnImplementation(process.execPath, [pnpmExecPath, "validate"], {
         cwd: workspacePath,
         shell: false,
         env: validationEnvironment(environment),
@@ -191,16 +211,31 @@ function createValidationProcess(
       });
     }
 
-    return spawn("pnpm", ["validate"], {
-      cwd: workspacePath,
-      shell: false,
-      env: validationEnvironment(environment),
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // pnpm is normally a .cmd shim on Windows, and Windows's CreateProcess
+    // (unlike a shell) won't resolve a bare command through PATHEXT to find
+    // it when shell is false - it only tries appending .exe. shell is safe
+    // here specifically because the whole command line is a fixed literal,
+    // never interpolated from anything untrusted; passing it as one string
+    // (rather than a command plus an args array) is also what avoids
+    // Node's shell-plus-args deprecation warning (DEP0190).
+    return process.platform === "win32"
+      ? spawnImplementation("pnpm validate", {
+          cwd: workspacePath,
+          shell: true,
+          env: validationEnvironment(environment),
+          detached: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        })
+      : spawnImplementation("pnpm", ["validate"], {
+          cwd: workspacePath,
+          shell: false,
+          env: validationEnvironment(environment),
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
   }
 
-  return spawn(
+  return spawnImplementation(
     sandbox.executablePath,
     [
       "--die-with-parent",
@@ -296,6 +331,24 @@ function terminateValidationProcess(
     }
   }
 
+  if (process.platform === "win32") {
+    // The bare-"pnpm" fallback path spawns through cmd.exe (see
+    // createValidationProcess) so it can resolve a .cmd shim, which makes
+    // `child` the cmd.exe wrapper, not the actual validator process it
+    // launches. child.kill() only terminates that wrapper - the real
+    // grandchild process (and its held stdout/stderr pipe handles) survives,
+    // so `close` never fires and the caller hangs past the timeout.
+    // taskkill /T kills the whole process tree instead.
+    try {
+      execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+      return;
+    } catch {
+      // Fall through to a best-effort child.kill() below.
+    }
+  }
+
   try {
     child.kill(signal);
   } catch {
@@ -343,8 +396,10 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
   readonly #environment: NodeJS.ProcessEnv | undefined;
   readonly #sandbox: ValidationSandboxOptions | undefined;
   readonly #container: ValidationContainerOptions | undefined;
+  readonly #spawn: typeof spawn;
 
   constructor(options: PnpmWorkspaceValidatorOptions = {}) {
+    this.#spawn = options.spawnImplementation ?? spawn;
     this.#timeoutMs = requirePositiveInteger(
       "timeoutMs",
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -362,7 +417,10 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
 
     this.#gitExecutablePath =
       options.gitExecutablePath ?? DEFAULT_GIT_EXECUTABLE_PATH;
-    if (!isAbsolute(this.#gitExecutablePath)) {
+    if (
+      options.gitExecutablePath !== undefined &&
+      !isAbsolute(options.gitExecutablePath)
+    ) {
       throw new RangeError("gitExecutablePath must be absolute");
     }
     this.#verifyCandidateCommit = options.verifyCandidateCommit ?? true;
@@ -488,6 +546,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
           this.#sandbox,
           this.#container,
           this.#environment,
+          this.#spawn,
         );
       } catch (error) {
         reject(

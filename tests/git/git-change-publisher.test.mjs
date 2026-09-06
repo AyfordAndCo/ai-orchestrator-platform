@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   chmod,
   mkdtemp,
@@ -7,6 +7,7 @@ import {
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +24,21 @@ import { GitChangePublisher } from "../../dist/packages/integrations/src/git/ind
 import { git, sanitizedGitEnv } from "../support/git-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
-const gitExecutablePath = "/usr/bin/git";
+
+// GitChangePublisher requires an absolute, pinned git executable - resolve
+// the real one on whatever platform runs this test rather than hardcoding a
+// POSIX path that doesn't exist on Windows.
+function resolveGitExecutablePath() {
+  const finder = process.platform === "win32" ? "where" : "which";
+  const stdout = execFileSync(finder, ["git"], { encoding: "utf8" });
+  const resolved = stdout.split(/\r?\n/)[0]?.trim();
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error("Unable to resolve an absolute git executable for tests");
+  }
+  return resolved;
+}
+
+const gitExecutablePath = resolveGitExecutablePath();
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "all-316-git-"));
@@ -108,7 +123,7 @@ test("inspects path-safe tracked, untracked, deleted, and metacharacter changes"
   );
 });
 
-test("rejects pre-existing staging, forbidden artifacts, symlinks, no changes, and unsafe branches", async (t) => {
+test("rejects pre-existing staging, forbidden artifacts, no changes, and unsafe branches", async (t) => {
   const staged = await fixture();
   t.after(() => rm(staged.root, { recursive: true, force: true }));
   await writeFile(join(staged.workspace.workspacePath, "staged.txt"), "x\n");
@@ -129,18 +144,6 @@ test("rejects pre-existing staging, forbidden artifacts, symlinks, no changes, a
     gitBoundaryErrorCodes.GIT_FORBIDDEN_PATH,
   );
 
-  const linked = await fixture();
-  t.after(() => rm(linked.root, { recursive: true, force: true }));
-  await execFileAsync("ln", [
-    "-s",
-    "/tmp",
-    join(linked.workspace.workspacePath, "outside-link"),
-  ]);
-  await rejectsCode(
-    () => publisher(linked).inspect({ workspace: linked.workspace }),
-    gitBoundaryErrorCodes.GIT_SCOPE_VIOLATION,
-  );
-
   const clean = await fixture();
   t.after(() => rm(clean.root, { recursive: true, force: true }));
   await rejectsCode(
@@ -153,6 +156,34 @@ test("rejects pre-existing staging, forbidden artifacts, symlinks, no changes, a
         workspace: { ...clean.workspace, featureBranch: "main" },
       }),
     gitBoundaryErrorCodes.GIT_UNSAFE_BRANCH,
+  );
+});
+
+test("rejects a symlink that escapes the workspace as a scope violation", async (t) => {
+  const linked = await fixture();
+  t.after(() => rm(linked.root, { recursive: true, force: true }));
+  const linkPath = join(linked.workspace.workspacePath, "outside-link");
+
+  try {
+    // A real symlink, not a junction: git-for-Windows recurses into a
+    // junction as an ordinary directory when scanning untracked files
+    // (unlike a real symlink, which it - like POSIX git - reports as a
+    // single leaf entry), so a junction wouldn't exercise the
+    // isSymbolicLink() check in assertApprovedPath at all.
+    await symlink(tmpdir(), linkPath, "dir");
+  } catch (error) {
+    if (process.platform === "win32" && error.code === "EPERM") {
+      t.skip(
+        "creating a real symlink needs Developer Mode or admin on Windows",
+      );
+      return;
+    }
+    throw error;
+  }
+
+  await rejectsCode(
+    () => publisher(linked).inspect({ workspace: linked.workspace }),
+    gitBoundaryErrorCodes.GIT_SCOPE_VIOLATION,
   );
 });
 
