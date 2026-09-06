@@ -10,11 +10,13 @@ import test from "node:test";
 
 import { git } from "../support/git-fixture.mjs";
 import {
+  assertNoActiveGitFilters,
   assertNoCustomGitHooks,
   assertNoEmbeddedCredentials,
   assertOriginMatchesRepo,
   buildInstruction,
   deriveFeatureBranch,
+  omitUntrustedProcessOutput,
   parseArgs,
   parseGitHubOwnerRepo,
   readOptions,
@@ -84,21 +86,67 @@ test("parseArgs reads --flag value pairs and treats a trailing/next-flag flag as
   });
 });
 
-test("resolveExecutable returns an explicit absolute path unchanged when it exists", async () => {
+const fakeFileStat = async () => ({ isFile: () => true });
+const fakeDirectoryStat = async () => ({ isFile: () => false });
+
+test("resolveExecutable returns an explicit absolute path unchanged when it exists and is executable", async () => {
   const fakeAccess = async () => {};
   assert.equal(
-    await resolveExecutable("codex", "/abs/codex", execFileAsync, fakeAccess),
+    await resolveExecutable(
+      "codex",
+      "/abs/codex",
+      execFileAsync,
+      fakeAccess,
+      fakeFileStat,
+    ),
     "/abs/codex",
   );
 });
 
 test("resolveExecutable rejects an explicit absolute path that does not exist", async () => {
-  const fakeAccess = async () => {
+  const fakeAccess = async () => {};
+  const fakeStat = async () => {
     throw new Error("ENOENT");
   };
   await assert.rejects(
-    resolveExecutable("codex", "/abs/missing-codex", execFileAsync, fakeAccess),
+    resolveExecutable(
+      "codex",
+      "/abs/missing-codex",
+      execFileAsync,
+      fakeAccess,
+      fakeStat,
+    ),
     /--codex-path does not exist/,
+  );
+});
+
+test("resolveExecutable rejects an explicit path that is a directory, not a file", async () => {
+  const fakeAccess = async () => {};
+  await assert.rejects(
+    resolveExecutable(
+      "docker",
+      "/abs/some-dir",
+      execFileAsync,
+      fakeAccess,
+      fakeDirectoryStat,
+    ),
+    /--docker-path is not a regular file/,
+  );
+});
+
+test("resolveExecutable rejects an explicit path that exists but is not executable", async () => {
+  const fakeAccess = async () => {
+    throw new Error("EACCES");
+  };
+  await assert.rejects(
+    resolveExecutable(
+      "docker",
+      "/abs/not-executable",
+      execFileAsync,
+      fakeAccess,
+      fakeFileStat,
+    ),
+    /--docker-path is not executable/,
   );
 });
 
@@ -267,6 +315,10 @@ test("readOptions rejects an explicit --feature-branch that doesn't follow the c
     readOptions(baseArgs({ "feature-branch": "agent/custom-branch" })),
     /does not reference issue #42/,
   );
+  await assert.rejects(
+    readOptions(baseArgs({ "feature-branch": "agent/issue-42" })),
+    /does not reference issue #42/,
+  );
 });
 
 test("readOptions rejects --allow-host-validation outright", async () => {
@@ -419,6 +471,13 @@ test("validateFeatureBranch rejects a branch that doesn't reference the issue nu
   );
 });
 
+test("validateFeatureBranch rejects the bare issue key with no short-description", () => {
+  assert.throws(
+    () => validateFeatureBranch("agent/issue-42", 42),
+    /does not reference issue #42/,
+  );
+});
+
 test("assertNoEmbeddedCredentials rejects a URL with inline credentials", () => {
   assert.throws(
     () =>
@@ -442,6 +501,16 @@ test("assertNoEmbeddedCredentials accepts URLs without embedded credentials", ()
   );
   assert.doesNotThrow(() =>
     assertNoEmbeddedCredentials("git@github.com:AyfordAndCo/example.git"),
+  );
+});
+
+test("assertNoEmbeddedCredentials accepts the ordinary SSH username, which is not a secret", () => {
+  // ssh://git@github.com/... is a form parseGitHubOwnerRepo explicitly
+  // recognizes; "git@" here is the fixed, non-secret SSH login convention,
+  // not embedded userinfo credentials - OpenSSH authenticates via
+  // keys/agent, never a URL-embedded password.
+  assert.doesNotThrow(() =>
+    assertNoEmbeddedCredentials("ssh://git@github.com/AyfordAndCo/example.git"),
   );
 });
 
@@ -591,6 +660,73 @@ test("assertNoCustomGitHooks ignores git's own *.sample hook templates", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("assertNoActiveGitFilters passes when no local filter commands are configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-filters-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await assert.doesNotReject(assertNoActiveGitFilters("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoActiveGitFilters refuses to run when a local clean/smudge filter command is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-filters-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "filter.lfs.clean",
+      "git-lfs clean -- %f",
+    );
+    await assert.rejects(
+      assertNoActiveGitFilters("git", root),
+      /git filter command\(s\).*filter\.lfs\.clean/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("omitUntrustedProcessOutput replaces raw agent/validation/git output with a length summary", () => {
+  const result = {
+    run: { runId: "r1", state: "FAILED" },
+    agentExecution: { summary: "leaked sk-proj-not-a-recognized-shape" },
+    validationFailure: {
+      code: "VALIDATION_FAILED",
+      message: "exit 1",
+      exitCode: 1,
+      stdout: "some stdout",
+      stderr: "some stderr",
+    },
+    gitFailure: {
+      code: "COMMIT_FAILED",
+      message: "commit failed",
+      stdout: "git stdout",
+      stderr: "git stderr",
+    },
+  };
+
+  const output = omitUntrustedProcessOutput(result);
+
+  assert.deepEqual(output.run, result.run);
+  assert.doesNotMatch(output.agentExecution.summary, /sk-proj/);
+  assert.match(output.agentExecution.summary, /chars omitted/);
+  assert.doesNotMatch(output.validationFailure.stdout, /some stdout/);
+  assert.doesNotMatch(output.validationFailure.stderr, /some stderr/);
+  assert.equal(output.validationFailure.code, "VALIDATION_FAILED");
+  assert.equal(output.validationFailure.exitCode, 1);
+  assert.doesNotMatch(output.gitFailure.stdout, /git stdout/);
+  assert.doesNotMatch(output.gitFailure.stderr, /git stderr/);
+});
+
+test("omitUntrustedProcessOutput leaves fields absent when the run has no failure output", () => {
+  const result = { run: { runId: "r1", state: "COMPLETED" } };
+  assert.deepEqual(omitUntrustedProcessOutput(result), result);
 });
 
 test("running the compiled file directly actually executes main() (entrypoint detection works on this platform)", async () => {

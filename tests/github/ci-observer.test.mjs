@@ -15,21 +15,24 @@ function createObserver(responses, calls) {
   });
 }
 
+const prInfo = {
+  head: { sha: "abc", ref: "feature" },
+  base: { ref: "main" },
+  html_url: "https://github.com/allan/repo/pull/7",
+};
+
 test("maps check runs into provider-neutral CI states", async () => {
   const calls = [];
   const observer = createObserver(
     [
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "main" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
+      prInfo,
       {
         check_runs: [
           { name: "build", status: "completed", conclusion: "success" },
           { name: "lint", status: "completed", conclusion: "success" },
         ],
       },
+      { statuses: [] },
     ],
     calls,
   );
@@ -51,17 +54,20 @@ test("maps check runs into provider-neutral CI states", async () => {
       args.some((arg) => String(arg).includes("/commits/abc/check-runs")),
     ),
   );
+  assert.ok(
+    calls.some((args) =>
+      args.some((arg) => String(arg).includes("/commits/abc/status")),
+    ),
+  );
+  assert.ok(
+    calls.some((args) => args.includes("--paginate")),
+    "check-run and status lookups should paginate rather than trust a single page",
+  );
 });
 
 test("fails closed when the PR head SHA changes", async () => {
   const observer = createObserver(
-    [
-      {
-        head: { sha: "different", ref: "feature" },
-        base: { ref: "main" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-    ],
+    [{ ...prInfo, head: { sha: "different", ref: "feature" } }],
     [],
   );
 
@@ -77,13 +83,7 @@ test("fails closed when the PR head SHA changes", async () => {
 
 test("fails closed when the PR base branch changes", async () => {
   const observer = createObserver(
-    [
-      {
-        head: { sha: "abc", ref: "feature" },
-        base: { ref: "develop" },
-        html_url: "https://github.com/allan/repo/pull/7",
-      },
-    ],
+    [{ ...prInfo, base: { ref: "develop" } }],
     [],
   );
 
@@ -97,14 +97,104 @@ test("fails closed when the PR base branch changes", async () => {
   assert.equal(result.checks.length, 0);
 });
 
+test("merges legacy commit statuses into the result when no check runs exist", async () => {
+  const observer = createObserver(
+    [
+      prInfo,
+      { check_runs: [] },
+      { statuses: [{ context: "legacy-ci", state: "success" }] },
+    ],
+    [],
+  );
+
+  const result = await observer.observe({
+    repository: "allan/repo",
+    pullRequestNumber: 7,
+    expectedHeadSha: "abc",
+  });
+
+  assert.equal(result.state, "success");
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.checks[0].name, "legacy-ci");
+  assert.equal(result.checks[0].state, "SUCCESS");
+});
+
+test("fails when a legacy commit status reports failure even though all check runs pass", async () => {
+  const observer = createObserver(
+    [
+      prInfo,
+      {
+        check_runs: [
+          { name: "build", status: "completed", conclusion: "success" },
+        ],
+      },
+      { statuses: [{ context: "legacy-ci", state: "failure" }] },
+    ],
+    [],
+  );
+
+  const result = await observer.observe({
+    repository: "allan/repo",
+    pullRequestNumber: 7,
+    expectedHeadSha: "abc",
+  });
+
+  assert.equal(result.state, "failure");
+  assert.equal(result.checks.length, 2);
+});
+
+test("collects check runs across multiple paginated pages before deciding success", async () => {
+  const observer = new GhCliCiObserver({
+    executablePath: "/usr/bin/gh",
+    execFileImplementation: async (_file, args) => {
+      const joined = args.join(" ");
+      if (joined.includes("/check-runs")) {
+        const page1 = {
+          check_runs: [
+            { name: "build", status: "completed", conclusion: "success" },
+          ],
+        };
+        const page2 = {
+          check_runs: [
+            { name: "lint", status: "completed", conclusion: "success" },
+          ],
+        };
+        return {
+          stdout: `${JSON.stringify(page1)}\n${JSON.stringify(page2)}\n`,
+        };
+      }
+      if (joined.includes("/status")) {
+        return { stdout: JSON.stringify({ statuses: [] }) };
+      }
+      return { stdout: JSON.stringify(prInfo) };
+    },
+    timeoutMs: 10,
+    pollIntervalMs: 1,
+  });
+
+  const result = await observer.observe({
+    repository: "allan/repo",
+    pullRequestNumber: 7,
+    expectedHeadSha: "abc",
+  });
+
+  assert.equal(result.state, "success");
+  assert.equal(result.checks.length, 2);
+  assert.deepEqual(result.checks.map((check) => check.name).sort(), [
+    "build",
+    "lint",
+  ]);
+});
+
 test("times out when checks never resolve", async () => {
   const calls = [];
   const observer = new GhCliCiObserver({
     executablePath: "/usr/bin/gh",
     execFileImplementation: async (_file, args) => {
       calls.push(args);
+      const joined = args.join(" ");
 
-      if (args.some((arg) => String(arg).includes("/commits/abc/check-runs"))) {
+      if (joined.includes("/check-runs")) {
         return {
           stdout: JSON.stringify({
             check_runs: [
@@ -114,13 +204,11 @@ test("times out when checks never resolve", async () => {
         };
       }
 
-      return {
-        stdout: JSON.stringify({
-          head: { sha: "abc", ref: "feature" },
-          base: { ref: "main" },
-          html_url: "https://github.com/allan/repo/pull/7",
-        }),
-      };
+      if (joined.includes("/status")) {
+        return { stdout: JSON.stringify({ statuses: [] }) };
+      }
+
+      return { stdout: JSON.stringify(prInfo) };
     },
     timeoutMs: 10,
     pollIntervalMs: 1,

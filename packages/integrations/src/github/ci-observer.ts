@@ -76,6 +76,13 @@ function mapCheckState(
   return "FAILURE";
 }
 
+/** Maps a legacy Commit Status API state (pending/success/failure/error) to a check state. */
+function mapCommitStatusState(state: string | undefined): GitHubCheck["state"] {
+  if (state === "success") return "SUCCESS";
+  if (state === "pending" || state === undefined) return "PENDING";
+  return "FAILURE";
+}
+
 export class GhCliCiObserver implements CiObserver {
   readonly #executablePath: string;
   readonly #environment: NodeJS.ProcessEnv | undefined;
@@ -117,6 +124,36 @@ export class GhCliCiObserver implements CiObserver {
     return parseJson<T>(result.stdout, operation);
   }
 
+  /**
+   * Follows every page of a Link-header-paginated endpoint via `gh api
+   * --paginate --jq '.'`, which prints each page's full JSON response as its
+   * own line. Returns the parsed pages in order, so callers can aggregate
+   * fields (e.g. concatenating an array field) the same way across however
+   * many pages actually came back, rather than silently deciding from only
+   * the first page.
+   */
+  async #apiPaginated<T>(operation: string, endpoint: string): Promise<T[]> {
+    let result: GhResult;
+    const command = createGhCommand(this.#executablePath);
+    try {
+      result = (await this.#execFile(
+        command.command,
+        [...command.args, "api", "--paginate", "--jq", ".", endpoint],
+        {
+          encoding: "utf8",
+          env: this.#environment,
+          maxBuffer: MAX_OUTPUT,
+        },
+      )) as GhResult;
+    } catch (error) {
+      throw new Error(`${operation} failed`, { cause: error });
+    }
+    return result.stdout
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .map((line) => parseJson<T>(line, operation));
+  }
+
   async observe(request: CiObservationRequest): Promise<CiObservationResult> {
     const repository = repositoryPath(request.repository);
     const startedAt = Date.now();
@@ -142,25 +179,58 @@ export class GhCliCiObserver implements CiObserver {
         };
       }
 
-      const value = await this.#api<{
-        check_runs?: Array<{
-          name: string;
-          status: string;
-          conclusion: string | null;
-          details_url?: string;
-        }>;
-      }>(
-        "get checks",
-        `repos/${repository}/commits/${pullRequest.head.sha}/check-runs`,
-      );
+      const [checkRunPages, statusPages] = await Promise.all([
+        this.#apiPaginated<{
+          check_runs?: Array<{
+            name: string;
+            status: string;
+            conclusion: string | null;
+            details_url?: string;
+          }>;
+        }>(
+          "get checks",
+          `repos/${repository}/commits/${pullRequest.head.sha}/check-runs?per_page=100`,
+        ),
+        // GitHub reports CI through two independent systems: check runs
+        // (GitHub Actions and most modern integrations) and the legacy
+        // Commit Status API (older CI providers still use this exclusively).
+        // A repository using only the latter would otherwise see an
+        // eternally-empty check_runs array and never leave "pending", even
+        // once its actual CI passed - the same combination
+        // pull-request-action-source.ts already does for the same reason.
+        this.#apiPaginated<{
+          statuses?: Array<{
+            context?: string;
+            state?: string;
+            target_url?: string;
+          }>;
+        }>(
+          "get commit status",
+          `repos/${repository}/commits/${pullRequest.head.sha}/status?per_page=100`,
+        ),
+      ]);
 
-      const checks = (value.check_runs ?? []).map((check) => ({
-        name: check.name,
-        state: mapCheckState(check.status, check.conclusion),
-        ...(check.details_url === undefined
-          ? {}
-          : { detailsUrl: check.details_url }),
-      }));
+      const checkRunChecks = checkRunPages.flatMap(
+        (page) => page.check_runs ?? [],
+      );
+      const statusChecks = statusPages.flatMap((page) => page.statuses ?? []);
+
+      const checks = [
+        ...checkRunChecks.map((check) => ({
+          name: check.name,
+          state: mapCheckState(check.status, check.conclusion),
+          ...(check.details_url === undefined
+            ? {}
+            : { detailsUrl: check.details_url }),
+        })),
+        ...statusChecks.map((status) => ({
+          name: status.context ?? "Commit status",
+          state: mapCommitStatusState(status.state),
+          ...(status.target_url === undefined
+            ? {}
+            : { detailsUrl: status.target_url }),
+        })),
+      ];
 
       const state = mapState(checks);
       if (state === "success") {

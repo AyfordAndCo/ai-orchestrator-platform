@@ -46,23 +46,35 @@ one before running this.
   runtimes without a dedicated image, rather than running them in the default
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
-- The target repository must have no active git hooks. `GitChangePublisher`'s
-  commit/push never pass `--no-verify`, so either a repository that points
-  `core.hooksPath` into its tracked tree (as Husky does) or one with an
-  ordinary hook file already sitting in its default hooks directory would
-  let an agent-modified hook execute with full host privileges, bypassing
-  both the Codex and validation sandboxes. This runner refuses to start if
-  it detects either. This is a preflight mitigation, not a complete fix — it
-  only catches hooks already present before the run starts, not one the
-  agent adds during its own execution. A complete fix belongs in
-  `GitChangePublisher` itself.
+- The target repository must have no active git hooks or git filter
+  commands. `GitChangePublisher`'s commit/push never pass `--no-verify`, so
+  a repository that points `core.hooksPath` into its tracked tree (as Husky
+  does), one with an ordinary hook file already sitting in its default
+  hooks directory, or one with a local `filter.<name>.clean`/`smudge`/
+  `process` command configured (e.g. by git-lfs) that a tracked
+  `.gitattributes` entry can route a file through, would let agent-modified
+  code execute with full host privileges during `git add`/`commit`/`push`,
+  bypassing both the Codex and validation sandboxes. This runner refuses to
+  start if it detects any of these. This is a preflight mitigation, not a
+  complete fix — it only catches something already configured before the
+  run starts, not something the agent sets up during its own execution. A
+  complete fix belongs in `GitChangePublisher` itself.
 - The target repository's origin (and any separately configured push URL)
-  must not have credentials embedded in the URL. This runner fails closed on
-  that rather than only redacting it from logs: Codex's own workspace shares
-  this clone's `.git/config` and has network access, so an embedded
-  credential could be read via `git remote get-url origin` and misused
-  before the intended push ever happens (see
+  must not have credentials embedded in an HTTP(S) URL. This runner fails
+  closed on that rather than only redacting it from logs: Codex's own
+  workspace shares this clone's `.git/config` and has network access, so an
+  embedded credential could be read via `git remote get-url origin` and
+  misused before the intended push ever happens (see
   [#33](https://github.com/AyfordAndCo/ai-orchestrator-platform/issues/33)).
+  An SSH origin's `git@` userinfo is exempt — it's the fixed, non-secret SSH
+  login convention, not a credential.
+- The raw output printed at the end of a run — Codex's own summary, and any
+  validation or git failure's stdout/stderr — is never trusted to be
+  secret-free. `redactSecretsDeep` only recognizes known key=value and
+  token-prefix shapes, so this runner replaces that specific raw text with a
+  length summary instead of printing it, rather than relying on an
+  ever-growing regex list. Inspect the workspace or validation container
+  directly if you need the actual output.
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.
@@ -110,7 +122,7 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
 | `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                             |
 | `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                        |
 | `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | validated against this repo's `<developer>/<issue-key>-<short-description>` convention and must reference `--issue` |
-| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute if passed                                                                                          |
+| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute, an existing regular file, and executable, if passed                                               |
 | `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                    |
 | `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                         |
 | `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                      |

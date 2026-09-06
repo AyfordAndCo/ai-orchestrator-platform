@@ -24,7 +24,8 @@
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
@@ -32,6 +33,7 @@ import { promisify } from "node:util";
 
 import { GitWorkspaceProvisioner } from "../../../../packages/integrations/src/git/git-workspace-provisioner.js";
 import { executeRepositoryRun } from "../run/execute-repository-run.js";
+import type { ExecuteRunResult } from "../run/index.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -103,15 +105,31 @@ export async function resolveExecutable(
   explicit: string | undefined,
   execFileImplementation: typeof execFileAsync = execFileAsync,
   accessImplementation: typeof access = access,
+  statImplementation: typeof stat = stat,
 ): Promise<string> {
   if (explicit !== undefined) {
     if (!isAbsolute(explicit)) {
       throw new RangeError(`--${name}-path must be an absolute path`);
     }
+    let stats: Awaited<ReturnType<typeof stat>>;
     try {
-      await accessImplementation(explicit);
+      stats = await statImplementation(explicit);
     } catch (error) {
       throw new Error(`--${name}-path does not exist: ${explicit}`, {
+        cause: error,
+      });
+    }
+    if (!stats.isFile()) {
+      throw new Error(`--${name}-path is not a regular file: ${explicit}`);
+    }
+    // X_OK is a no-op existence check on Windows (no execute-permission bit
+    // there), but on POSIX it catches a real, existing, non-executable file
+    // that access()'s default F_OK mode would silently accept, only to fail
+    // later mid-run when the validation container tries to spawn it.
+    try {
+      await accessImplementation(explicit, constants.X_OK);
+    } catch (error) {
+      throw new Error(`--${name}-path is not executable: ${explicit}`, {
         cause: error,
       });
     }
@@ -417,21 +435,90 @@ export async function assertNoCustomGitHooks(
   }
 }
 
+/**
+ * Lists locally configured filter.<name>.clean/smudge/process commands.
+ * Git ignores a filter *name* referenced by a tracked .gitattributes entry
+ * unless that name's command is separately configured - but the command
+ * itself is only ever set in git config, and this checks --local only for
+ * the same reason readLocalHooksPath does: GitChangePublisher's own
+ * environment (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL=/dev/null) already
+ * neutralizes any global or system filter config, so only a filter command
+ * configured in this repository's own local config can still run.
+ */
+async function readActiveGitFilters(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<readonly string[]> {
+  try {
+    const { stdout } = await execFileAsync(gitPath, [
+      "-C",
+      repositoryPath,
+      "config",
+      "--local",
+      "--get-regexp",
+      "^filter\\..*\\.(clean|smudge|process)$",
+    ]);
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    // `git config --get-regexp` exits non-zero when nothing matches.
+    return [];
+  }
+}
+
+/**
+ * A tracked .gitattributes entry (which Codex's workspace can edit) routes
+ * a path through a filter by name; if that name's clean/smudge/process
+ * command is already configured locally (e.g. by git-lfs or a similar
+ * tool), GitChangePublisher's `git add` during commit() would run it with
+ * full host privileges - the same class of risk as a custom git hook, just
+ * triggered from a different git operation. This is a preflight mitigation,
+ * not a complete fix, for the same reason assertNoCustomGitHooks is: it
+ * only catches a filter already configured before the run starts.
+ */
+export async function assertNoActiveGitFilters(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<void> {
+  const activeFilters = await readActiveGitFilters(gitPath, repositoryPath);
+  if (activeFilters.length > 0) {
+    const filterNames = activeFilters.map((line) => line.split(" ")[0]);
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has git filter command(s) ` +
+        `configured (${filterNames.join(", ")}). A tracked .gitattributes ` +
+        "entry can route a file through an already-configured filter's " +
+        "clean/smudge/process command during `git add`, executing with " +
+        "full host privileges. Remove these first: " +
+        "git config --local --unset <key> for each key listed by " +
+        "git config --local --get-regexp '^filter\\.'",
+    );
+  }
+}
+
 /** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
 export function redactUrl(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
 }
 
 /**
- * Fails closed on a URL with embedded userinfo (e.g. an inline PAT) rather
- * than merely redacting it from logs. Codex's workspace and this clone share
- * the same .git/config, and Codex's workspace has network access, so a
- * credential placed here could be read via `git remote get-url origin` and
- * exfiltrated before the intended push ever happens - the same risk that
- * caused the earlier --github-token feature to be reverted (issue #33).
+ * Fails closed on an HTTP(S) URL with embedded userinfo (e.g. an inline PAT)
+ * rather than merely redacting it from logs. Codex's workspace and this
+ * clone share the same .git/config, and Codex's workspace has network
+ * access, so a credential placed here could be read via
+ * `git remote get-url origin` and exfiltrated before the intended push ever
+ * happens - the same risk that caused the earlier --github-token feature to
+ * be reverted (issue #33).
+ *
+ * Deliberately HTTP(S)-only: an SSH URL's userinfo is just the fixed,
+ * non-secret "git" login convention (`ssh://git@github.com/...`, matching
+ * the form parseGitHubOwnerRepo already recognizes) - OpenSSH authenticates
+ * via keys/agent, never a password embedded in the URL, so there is no
+ * credential there to exfiltrate.
  */
 export function assertNoEmbeddedCredentials(url: string): void {
-  if (/^[a-z][a-z0-9+.-]*:\/\/[^/@]+@/i.test(url.trim())) {
+  if (/^https?:\/\/[^/@]+@/i.test(url.trim())) {
     throw new Error(
       `Refusing to run: ${redactUrl(url)} has embedded credentials in its ` +
         "URL. Codex's workspace shares this clone's .git/config and has " +
@@ -475,6 +562,74 @@ export function redactSecretsDeep(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function summarizeOmittedOutput(text: string): string;
+function summarizeOmittedOutput(text: undefined): undefined;
+function summarizeOmittedOutput(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  return (
+    `[${text.length} chars omitted: untrusted process output is not ` +
+    "printed here, since it can contain a raw secret in a form no regex " +
+    "list reliably recognizes (redactSecrets only catches known key=value " +
+    "and token-prefix shapes). Inspect the workspace or validation " +
+    "container directly if you need the raw output.]"
+  );
+}
+
+/**
+ * result.agentExecution.summary and the stdout/stderr on a validation or git
+ * failure are all raw, untrusted process/agent output that redactSecretsDeep
+ * cannot be trusted to fully sanitize - unlike the structured fields
+ * elsewhere in the result, this text could contain literally anything,
+ * including a secret in a shape none of redactSecrets's patterns recognize
+ * (AGENTS.md forbids exposing secrets in logs). Replacing it with a length
+ * summary here, rather than trying to extend the regex list further, is the
+ * fix the earlier review round asked for.
+ */
+export function omitUntrustedProcessOutput(
+  result: ExecuteRunResult,
+): ExecuteRunResult {
+  const { agentExecution, validationFailure, gitFailure, ...rest } = result;
+  return {
+    ...rest,
+    ...(agentExecution === undefined
+      ? {}
+      : {
+          agentExecution: {
+            ...agentExecution,
+            ...(agentExecution.summary === undefined
+              ? {}
+              : { summary: summarizeOmittedOutput(agentExecution.summary) }),
+          },
+        }),
+    ...(validationFailure === undefined
+      ? {}
+      : {
+          validationFailure: {
+            ...validationFailure,
+            ...(validationFailure.stdout === undefined
+              ? {}
+              : { stdout: summarizeOmittedOutput(validationFailure.stdout) }),
+            ...(validationFailure.stderr === undefined
+              ? {}
+              : { stderr: summarizeOmittedOutput(validationFailure.stderr) }),
+          },
+        }),
+    ...(gitFailure === undefined
+      ? {}
+      : {
+          gitFailure: {
+            ...gitFailure,
+            ...(gitFailure.stdout === undefined
+              ? {}
+              : { stdout: summarizeOmittedOutput(gitFailure.stdout) }),
+            ...(gitFailure.stderr === undefined
+              ? {}
+              : { stderr: summarizeOmittedOutput(gitFailure.stderr) }),
+          },
+        }),
+  };
 }
 
 /**
@@ -561,12 +716,16 @@ export function validateFeatureBranch(branch: string, issue: number): void {
     );
   }
   const issueKeySegment = branch.slice(branch.indexOf("/") + 1);
-  if (!new RegExp(`(?:^|\\D)${issue}(?:\\D|$)`).test(issueKeySegment)) {
+  // Requires the issue number immediately followed by "-" and at least one
+  // more character - i.e. an actual <short-description>, not just the bare
+  // issue key (e.g. "agent/issue-42" has the issue number but no
+  // description and must still be rejected).
+  if (!new RegExp(`(?:^|\\D)${issue}-[a-z0-9]`, "i").test(issueKeySegment)) {
     throw new RangeError(
-      `--feature-branch "${branch}" does not reference issue #${issue} in ` +
-        "its issue-key segment, as required by the " +
-        "<developer>/<issue-key>-<short-description> convention " +
-        "(AGENTS.md).",
+      `--feature-branch "${branch}" does not reference issue #${issue} ` +
+        "followed by a non-empty <short-description> in its issue-key " +
+        "segment, as required by the <developer>/<issue-key>-" +
+        "<short-description> convention (AGENTS.md).",
     );
   }
 }
@@ -584,6 +743,7 @@ export function buildInstruction(issue: number, summary: IssueSummary): string {
 async function main(): Promise<void> {
   const options = await readOptions(process.argv.slice(2));
   await assertNoCustomGitHooks(options.gitPath, options.repositoryPath);
+  await assertNoActiveGitFilters(options.gitPath, options.repositoryPath);
 
   console.log(`Fetching issue #${options.issue} from ${options.repo}...`);
   const issueSummary = await fetchIssue(
@@ -680,7 +840,13 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   }
-  console.log(JSON.stringify(redactSecretsDeep(result), null, 2));
+  console.log(
+    JSON.stringify(
+      redactSecretsDeep(omitUntrustedProcessOutput(result)),
+      null,
+      2,
+    ),
+  );
 }
 
 const isMainModule =
