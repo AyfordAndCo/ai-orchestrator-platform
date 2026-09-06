@@ -41,6 +41,22 @@ const DEFAULT_CI_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_VALIDATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_AGENT_TIMEOUT_MS = 20 * 60 * 1000;
 
+/**
+ * Matches GitChangePublisher's own createGitEnvironment(): global/system
+ * config neutralized. Any git command this CLI runs to decide something
+ * GitChangePublisher will later rely on (a remote URL, a hooks/filter
+ * check) needs this same isolation - otherwise preflight can see a
+ * different effective value than the sanitized boundary will (e.g. a
+ * global url.*.insteadOf rewrite expanding a remote shorthand here, but
+ * not there), passing checks against a value nothing downstream actually
+ * uses.
+ */
+const GIT_CONFIG_ISOLATION_ENV = {
+  ...process.env,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+};
+
 function parsePositiveIntegerArg(
   args: Record<string, string | boolean>,
   name: string,
@@ -283,13 +299,11 @@ export async function readOriginUrl(
   gitPath: string,
   repositoryPath: string,
 ): Promise<string> {
-  const { stdout } = await execFileAsync(gitPath, [
-    "-C",
-    repositoryPath,
-    "remote",
-    "get-url",
-    "origin",
-  ]);
+  const { stdout } = await execFileAsync(
+    gitPath,
+    ["-C", repositoryPath, "remote", "get-url", "origin"],
+    { env: GIT_CONFIG_ISOLATION_ENV },
+  );
   return stdout.trim();
 }
 
@@ -306,15 +320,11 @@ export async function readPushUrls(
   gitPath: string,
   repositoryPath: string,
 ): Promise<readonly string[]> {
-  const { stdout } = await execFileAsync(gitPath, [
-    "-C",
-    repositoryPath,
-    "remote",
-    "get-url",
-    "--push",
-    "--all",
-    "origin",
-  ]);
+  const { stdout } = await execFileAsync(
+    gitPath,
+    ["-C", repositoryPath, "remote", "get-url", "--push", "--all", "origin"],
+    { env: GIT_CONFIG_ISOLATION_ENV },
+  );
   return stdout
     .split(/\r?\n/)
     .map((url) => url.trim())
@@ -379,13 +389,7 @@ async function readActiveDefaultHooks(
   const { stdout } = await execFileAsync(
     gitPath,
     ["-C", repositoryPath, "rev-parse", "--git-path", "hooks"],
-    {
-      env: {
-        ...process.env,
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
-      },
-    },
+    { env: GIT_CONFIG_ISOLATION_ENV },
   );
   const hooksDirRaw = stdout.trim();
   const hooksDir = isAbsolute(hooksDirRaw)
@@ -493,6 +497,79 @@ export async function assertNoActiveGitFilters(
         "full host privileges. Remove these first: " +
         "git config --local --unset <key> for each key listed by " +
         "git config --local --get-regexp '^filter\\.'",
+    );
+  }
+}
+
+async function readLocalConfigValue(
+  gitPath: string,
+  repositoryPath: string,
+  key: string,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(gitPath, [
+      "-C",
+      repositoryPath,
+      "config",
+      "--local",
+      "--get",
+      key,
+    ]);
+    return stdout.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `GitChangePublisher.commit()` runs `git commit` on the host, outside both
+ * the Codex and validation sandboxes. If the clone has local
+ * `commit.gpgSign=true`, git invokes whatever signing program is configured
+ * (gpg.program, or its ssh/x509 equivalents, or plain "gpg" from PATH by
+ * default) during that commit - an agent that can make a tracked or
+ * PATH-reachable file act as that program gets it executed with full host
+ * privileges. This is a preflight mitigation, not a complete fix, for the
+ * same reason assertNoCustomGitHooks is: it only catches signing already
+ * configured before the run starts.
+ */
+export async function assertNoCommitSigning(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<void> {
+  const gpgSign = await readLocalConfigValue(
+    gitPath,
+    repositoryPath,
+    "commit.gpgSign",
+  );
+  const signingEnabled =
+    gpgSign !== undefined && /^(?:true|1|yes|on)$/i.test(gpgSign);
+  const configuredPrograms = (
+    await Promise.all(
+      ["gpg.program", "gpg.ssh.program", "gpg.x509.program"].map(
+        async (key) => {
+          const value = await readLocalConfigValue(
+            gitPath,
+            repositoryPath,
+            key,
+          );
+          return value === undefined ? undefined : `${key}=${value}`;
+        },
+      ),
+    )
+  ).filter((entry): entry is string => entry !== undefined);
+
+  if (signingEnabled || configuredPrograms.length > 0) {
+    const found = [
+      ...(signingEnabled ? ["commit.gpgSign=true"] : []),
+      ...configuredPrograms,
+    ].join(", ");
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has commit signing configured ` +
+        `(${found}). GitChangePublisher's commit() runs outside the ` +
+        "sandbox, so an agent-modified signing program would execute with " +
+        "full host privileges. Disable it first: " +
+        "git config --local --unset commit.gpgSign (and unset any " +
+        "configured gpg.program/gpg.ssh.program/gpg.x509.program).",
     );
   }
 }
@@ -744,6 +821,7 @@ async function main(): Promise<void> {
   const options = await readOptions(process.argv.slice(2));
   await assertNoCustomGitHooks(options.gitPath, options.repositoryPath);
   await assertNoActiveGitFilters(options.gitPath, options.repositoryPath);
+  await assertNoCommitSigning(options.gitPath, options.repositoryPath);
 
   console.log(`Fetching issue #${options.issue} from ${options.repo}...`);
   const issueSummary = await fetchIssue(

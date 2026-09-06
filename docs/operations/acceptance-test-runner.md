@@ -46,19 +46,27 @@ one before running this.
   runtimes without a dedicated image, rather than running them in the default
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
-- The target repository must have no active git hooks or git filter
-  commands. `GitChangePublisher`'s commit/push never pass `--no-verify`, so
-  a repository that points `core.hooksPath` into its tracked tree (as Husky
-  does), one with an ordinary hook file already sitting in its default
-  hooks directory, or one with a local `filter.<name>.clean`/`smudge`/
-  `process` command configured (e.g. by git-lfs) that a tracked
-  `.gitattributes` entry can route a file through, would let agent-modified
-  code execute with full host privileges during `git add`/`commit`/`push`,
-  bypassing both the Codex and validation sandboxes. This runner refuses to
-  start if it detects any of these. This is a preflight mitigation, not a
-  complete fix — it only catches something already configured before the
-  run starts, not something the agent sets up during its own execution. A
-  complete fix belongs in `GitChangePublisher` itself.
+- The target repository must have no active git hooks, git filter
+  commands, or commit signing configured. `GitChangePublisher`'s
+  commit/push never pass `--no-verify`, so a repository that points
+  `core.hooksPath` into its tracked tree (as Husky does), one with an
+  ordinary hook file already sitting in its default hooks directory, one
+  with a local `filter.<name>.clean`/`smudge`/`process` command configured
+  (e.g. by git-lfs) that a tracked `.gitattributes` entry can route a file
+  through, or one with `commit.gpgSign`/`gpg.program` (or its ssh/x509
+  equivalents) configured, would let agent-modified code execute with full
+  host privileges during `git add`/`commit`/`push`, bypassing both the
+  Codex and validation sandboxes. This runner refuses to start if it
+  detects any of these. This is a preflight mitigation, not a complete fix
+  — it only catches something already configured before the run starts,
+  not something the agent sets up during its own execution. A complete fix
+  belongs in `GitChangePublisher` itself.
+- Remote URLs are read with global/system git config isolated
+  (`GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL=/dev/null`), matching
+  `GitChangePublisher`'s own environment: an ambient `url.*.insteadOf`
+  rewrite would otherwise let this runner's preflight see a different,
+  expanded URL than what `GitChangePublisher` actually operates against,
+  passing checks against a value nothing downstream uses.
 - The target repository's origin (and any separately configured push URL)
   must not have credentials embedded in an HTTP(S) URL. This runner fails
   closed on that rather than only redacting it from logs: Codex's own

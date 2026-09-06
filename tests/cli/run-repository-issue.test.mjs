@@ -11,6 +11,7 @@ import test from "node:test";
 import { git } from "../support/git-fixture.mjs";
 import {
   assertNoActiveGitFilters,
+  assertNoCommitSigning,
   assertNoCustomGitHooks,
   assertNoEmbeddedCredentials,
   assertOriginMatchesRepo,
@@ -20,6 +21,7 @@ import {
   parseArgs,
   parseGitHubOwnerRepo,
   readOptions,
+  readOriginUrl,
   readPushUrls,
   redactSecrets,
   redactSecretsDeep,
@@ -688,6 +690,83 @@ test("assertNoActiveGitFilters refuses to run when a local clean/smudge filter c
       /git filter command\(s\).*filter\.lfs\.clean/,
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCommitSigning passes when signing is not configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-signing-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await assert.doesNotReject(assertNoCommitSigning("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCommitSigning refuses to run when commit.gpgSign is enabled locally", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-signing-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "--local", "commit.gpgSign", "true");
+    await assert.rejects(
+      assertNoCommitSigning("git", root),
+      /commit\.gpgSign=true/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCommitSigning refuses to run when a gpg program is configured locally", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-signing-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "--local", "gpg.program", "/workspace/fake-gpg");
+    await assert.rejects(
+      assertNoCommitSigning("git", root),
+      /gpg\.program=\/workspace\/fake-gpg/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readOriginUrl and readPushUrls ignore ambient global config, matching GitChangePublisher's own isolation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-origin-isolation-"));
+  const fakeGlobalConfig = join(root, "fake-global-gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "shorthand:owner/repo.git");
+    await writeFile(
+      fakeGlobalConfig,
+      '[url "https://github.com/"]\n\tinsteadOf = shorthand:\n',
+    );
+    process.env.GIT_CONFIG_GLOBAL = fakeGlobalConfig;
+
+    // Prove the scenario is real first: an ambient global insteadOf rule
+    // does rewrite the URL for a plain, unisolated git invocation.
+    const { stdout: ambient } = await execFileAsync("git", [
+      "-C",
+      root,
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    assert.equal(ambient.trim(), "https://github.com/owner/repo.git");
+
+    // readOriginUrl/readPushUrls must see the same raw value
+    // GitChangePublisher's own sanitized environment will, not this
+    // ambient rewrite - otherwise preflight passes against a URL nothing
+    // downstream actually uses.
+    assert.equal(await readOriginUrl("git", root), "shorthand:owner/repo.git");
+    assert.deepEqual(await readPushUrls("git", root), [
+      "shorthand:owner/repo.git",
+    ]);
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await rm(root, { recursive: true, force: true });
   }
 });
