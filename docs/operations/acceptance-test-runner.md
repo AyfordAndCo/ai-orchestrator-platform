@@ -48,21 +48,22 @@ one before running this.
   actually supported by this runner today.
 - The target repository must have no active git hooks, git filter
   commands, commit signing, or other executable git config
-  (`core.fsmonitor`/`core.sshCommand`) configured. `GitChangePublisher`'s
-  commit/push never pass `--no-verify`, so a repository that points
-  `core.hooksPath` into its tracked tree (as Husky does), one with an
-  ordinary hook file already sitting in its default hooks directory, one
-  with a local `filter.<name>.clean`/`smudge`/`process` command configured
-  (e.g. by git-lfs) that a tracked `.gitattributes` entry can route a file
-  through, one with `commit.gpgSign`/`gpg.program` (or its ssh/x509
-  equivalents) configured, or one with `core.fsmonitor` set to a command
-  (rather than a plain boolean) or `core.sshCommand` configured, would let
-  agent-modified code execute with full host privileges during `git
-add`/`status`/`commit`/`push`, bypassing both the Codex and validation
-  sandboxes. This runner refuses to start if it detects any of these. This
-  is a preflight mitigation, not a complete fix — it only catches
-  something already configured before the run starts, not something the
-  agent sets up during its own execution. A complete fix belongs in
+  (`core.fsmonitor`/`core.sshCommand`/`credential.helper`) configured.
+  `GitChangePublisher`'s commit/push never pass `--no-verify`, so a
+  repository that points `core.hooksPath` into its tracked tree (as Husky
+  does), one with an ordinary hook file already sitting in its default
+  hooks directory, one with a local `filter.<name>.clean`/`smudge`/`process`
+  command configured (e.g. by git-lfs) that a tracked `.gitattributes` entry
+  can route a file through, one with `commit.gpgSign`/`gpg.program` (or its
+  ssh/x509 equivalents) configured, one with `core.fsmonitor` set to a
+  command (rather than a plain boolean) or `core.sshCommand` configured, or
+  one with a `credential.helper`/`credential.<url>.helper` naming an actual
+  program, would let agent-modified code execute with full host privileges
+  during `git add`/`status`/`commit`/`push`, bypassing both the Codex and
+  validation sandboxes. This runner refuses to start if it detects any of
+  these. This is a preflight mitigation, not a complete fix — it only
+  catches something already configured before the run starts, not something
+  the agent sets up during its own execution. A complete fix belongs in
   `GitChangePublisher` itself.
 - Remote URLs are read with global/system git config isolated
   (`GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL=/dev/null`), matching
@@ -70,6 +71,11 @@ add`/`status`/`commit`/`push`, bypassing both the Codex and validation
   rewrite would otherwise let this runner's preflight see a different,
   expanded URL than what `GitChangePublisher` actually operates against,
   passing checks against a value nothing downstream uses.
+  `GitWorkspaceProvisioner`'s own `fetch origin` during workspace creation
+  applies the same isolation (while keeping the operator's real
+  credentials/PATH, so an authenticated fetch still works) — otherwise an
+  ambient rewrite could make it build the workspace from a completely
+  different repository than the one every preflight check approved.
 - The target repository's origin (and any separately configured push URL)
   must not have credentials embedded in an HTTP(S) URL. This runner fails
   closed on that rather than only redacting it from logs: Codex's own

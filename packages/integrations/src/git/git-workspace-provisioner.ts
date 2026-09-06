@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 import type {
@@ -15,6 +16,22 @@ import {
 } from "../../../domain/src/workspace/index.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Global/system config isolated, ambient environment (PATH, SSH_AUTH_SOCK,
+ * credential helpers) otherwise preserved - unlike GitChangePublisher's
+ * fully reconstructed environment, this class needs the operator's real
+ * credentials/PATH to actually authenticate a fetch. Without this, a global
+ * `url.*.insteadOf` rewrite could make `fetch origin` (and the worktree
+ * built from what it fetched) target a different repository than the one
+ * every caller's preflight check - reading the same origin URL under this
+ * same isolation - approved.
+ */
+const GIT_CONFIG_ISOLATION_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+};
 
 interface CommandFailure extends Error {
   code?: number | string;
@@ -41,6 +58,7 @@ async function runGit(
       ["-C", repositoryPath, ...args],
       {
         encoding: "utf8",
+        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 
@@ -66,6 +84,7 @@ async function gitReferenceExists(
       ["-C", repositoryPath, "show-ref", "--verify", "--quiet", reference],
       {
         encoding: "utf8",
+        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 
@@ -103,6 +122,7 @@ async function assertSourceRepositoryExists(
       ["-C", repositoryPath, "rev-parse", "--is-inside-work-tree"],
       {
         encoding: "utf8",
+        env: GIT_CONFIG_ISOLATION_ENV,
       },
     );
 

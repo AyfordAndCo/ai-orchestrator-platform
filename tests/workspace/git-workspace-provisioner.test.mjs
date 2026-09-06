@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -156,6 +157,55 @@ test("creates an isolated workspace and returns metadata", async () => {
       `Expected worktree list to include ${normalizedWorkspacePath}, got:\n${worktreeList}`,
     );
   } finally {
+    await cleanup(repository);
+  }
+});
+
+test("fetches with global git config isolated, not an ambient url.*.insteadOf rewrite", async () => {
+  const repository = await createTestRepository();
+  const fakeGlobalConfig = join(repository.rootPath, "fake-global-gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    // Point origin at a shorthand that only resolves through a global
+    // insteadOf rewrite - to the real remote it was actually set up
+    // against. insteadOf rewrites by replacing the matched prefix with the
+    // url.<base> value via plain string concatenation, so the shorthand
+    // must have nothing after the matched prefix, or the remainder gets
+    // appended onto the replacement path instead of resolving cleanly.
+    await git(
+      repository.sourcePath,
+      "remote",
+      "set-url",
+      "origin",
+      "redirect-test:",
+    );
+    // git config's INI-style syntax treats "\" as an escape character
+    // inside a quoted section value, so a raw Windows path must have its
+    // backslashes escaped before being embedded here - otherwise git
+    // silently strips them, mangling the path.
+    const escapedRemotePath = repository.remotePath.replace(/\\/g, "\\\\");
+    await writeFile(
+      fakeGlobalConfig,
+      `[url "${escapedRemotePath}"]\n\tinsteadOf = redirect-test:\n`,
+    );
+    process.env.GIT_CONFIG_GLOBAL = fakeGlobalConfig;
+
+    // Prove the scenario is real first: an ambient (unisolated) fetch
+    // resolves the shorthand via the rewrite and succeeds.
+    await assert.doesNotReject(
+      execFileAsync("git", ["-C", repository.sourcePath, "fetch", "origin"]),
+    );
+
+    // GitWorkspaceProvisioner's own fetch must ignore this ambient rewrite
+    // the same way callers' preflight checks of the origin URL do, so it
+    // fails to resolve the raw (un-rewritten) shorthand rather than
+    // silently succeeding against whatever the rewrite happens to point at
+    // - which could be a different repository than every caller approved.
+    const provisioner = new GitWorkspaceProvisioner();
+    await assert.rejects(provisioner.preflight(createRequest(repository)));
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await cleanup(repository);
   }
 });

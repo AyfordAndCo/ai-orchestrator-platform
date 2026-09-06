@@ -788,6 +788,57 @@ test("assertNoExecutableGitConfig refuses to run when core.sshCommand is configu
   }
 });
 
+test("assertNoExecutableGitConfig refuses to run when credential.helper is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "credential.helper",
+      "!./tracked-helper.sh",
+    );
+    await assert.rejects(
+      assertNoExecutableGitConfig("git", root),
+      /credential\.helper=!\.\/tracked-helper\.sh/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig refuses to run when a URL-scoped credential.<url>.helper is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "credential.https://github.com.helper",
+      "!./tracked-helper.sh",
+    );
+    await assert.rejects(
+      assertNoExecutableGitConfig("git", root),
+      /credential\.https:\/\/github\.com\.helper=!\.\/tracked-helper\.sh/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig passes when credential.helper is explicitly cleared (empty value)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "--local", "--add", "credential.helper", "");
+    await assert.doesNotReject(assertNoExecutableGitConfig("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("readOriginUrl and readPushUrls ignore ambient global config, matching GitChangePublisher's own isolation", async () => {
   const root = await mkdtemp(join(tmpdir(), "cli-origin-isolation-"));
   const fakeGlobalConfig = join(root, "fake-global-gitconfig");

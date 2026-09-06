@@ -577,15 +577,51 @@ export async function assertNoCommitSigning(
 const GIT_CONFIG_BOOLEAN_PATTERN = /^(?:true|false|1|0|yes|no|on|off)$/i;
 
 /**
+ * Lists non-empty credential.helper / credential.<url>.helper entries.
+ * An empty value is git's own way to clear previously configured helpers
+ * (a safe, explicit "use no helper"), so only a non-empty value - naming an
+ * actual helper program - is collected here.
+ */
+async function readActiveCredentialHelpers(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<readonly string[]> {
+  try {
+    const { stdout } = await execFileAsync(gitPath, [
+      "-C",
+      repositoryPath,
+      "config",
+      "--local",
+      "--get-regexp",
+      "^credential\\.(.+\\.)?helper$",
+    ]);
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => {
+        const spaceIndex = line.indexOf(" ");
+        const value = spaceIndex === -1 ? "" : line.slice(spaceIndex + 1);
+        return value.trim().length > 0;
+      });
+  } catch {
+    // `git config --get-regexp` exits non-zero when nothing matches.
+    return [];
+  }
+}
+
+/**
  * `core.fsmonitor` set to anything other than a boolean is a command git
  * runs to query filesystem changes - including during the `git status`
  * GitChangePublisher.inspect() runs on the host. `core.sshCommand` is
  * always a command, used for the `git push` GitChangePublisher.push() runs.
- * Either pointed at a tracked (agent-editable) script gets that script
- * executed with full host privileges, the same class of risk as hooks,
- * filters, and commit signing. This is a preflight mitigation, not a
- * complete fix, for the same reason those are: it only catches
- * configuration already present before the run starts.
+ * `credential.helper` (or a URL-scoped `credential.<url>.helper`) is a
+ * command git runs to fill/store credentials, including during the host-side
+ * `git push` GitChangePublisher.push() runs. Any of these pointed at a
+ * tracked (agent-editable) script gets that script executed with full host
+ * privileges, the same class of risk as hooks, filters, and commit signing.
+ * This is a preflight mitigation, not a complete fix, for the same reason
+ * those are: it only catches configuration already present before the run
+ * starts.
  */
 export async function assertNoExecutableGitConfig(
   gitPath: string,
@@ -601,6 +637,10 @@ export async function assertNoExecutableGitConfig(
     repositoryPath,
     "core.sshCommand",
   );
+  const credentialHelpers = await readActiveCredentialHelpers(
+    gitPath,
+    repositoryPath,
+  );
 
   const found: string[] = [];
   if (fsmonitor !== undefined && !GIT_CONFIG_BOOLEAN_PATTERN.test(fsmonitor)) {
@@ -609,6 +649,14 @@ export async function assertNoExecutableGitConfig(
   if (sshCommand !== undefined) {
     found.push(`core.sshCommand=${sshCommand}`);
   }
+  found.push(
+    ...credentialHelpers.map((line) => {
+      const spaceIndex = line.indexOf(" ");
+      return spaceIndex === -1
+        ? line
+        : `${line.slice(0, spaceIndex)}=${line.slice(spaceIndex + 1)}`;
+    }),
+  );
 
   if (found.length > 0) {
     throw new Error(
@@ -616,8 +664,8 @@ export async function assertNoExecutableGitConfig(
         `(${found.join(", ")}). GitChangePublisher runs git status/push on ` +
         "the host, so an agent-modified script referenced here would " +
         "execute with full host privileges. Unset it first: " +
-        "git config --local --unset core.fsmonitor / core.sshCommand as " +
-        "applicable.",
+        "git config --local --unset core.fsmonitor / core.sshCommand / " +
+        "credential.helper as applicable.",
     );
   }
 }
