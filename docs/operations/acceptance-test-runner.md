@@ -45,6 +45,14 @@ one before running this.
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.
+- A way for `git push` to authenticate. `GitChangePublisher` builds a
+  completely explicit environment for its `git` subprocesses that excludes
+  `SSH_AUTH_SOCK` and any credential-helper configuration, so neither an SSH
+  agent nor a normally-configured HTTPS credential helper will work here.
+  Pass `--github-token` (or set `GH_TOKEN`/`GITHUB_TOKEN`) and the runner
+  temporarily rewrites the origin remote to embed it for the run, then
+  restores the original URL afterward — the token is never written to a
+  persistent git config.
 
 Note: workspace provisioning (`GitWorkspaceProvisioner`) always invokes
 `git` via `PATH` regardless of `--git-path` — that option only configures
@@ -76,6 +84,7 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
 | `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | follows this repo's `<developer>/<issue-key>-<short-description>` convention                                    |
 | `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute if passed                                                                                      |
 | `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                |
+| `--github-token`                                              | no          | `$GH_TOKEN` / `$GITHUB_TOKEN`           | needed for `git push` to authenticate; see Prerequisites above                                                  |
 | `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                     |
 | `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                  |
 

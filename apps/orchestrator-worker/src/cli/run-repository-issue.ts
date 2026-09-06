@@ -67,6 +67,7 @@ export interface CliOptions {
   readonly featureBranch?: string;
   readonly ciTimeoutMs: number;
   readonly validationTimeoutMs: number;
+  readonly githubToken?: string;
 }
 
 export function requireArg(name: string, value: string | undefined): string {
@@ -175,6 +176,10 @@ export async function readOptions(
   );
   const bunImage = args["bun-image"] as string | undefined;
   const dotnetImage = args["dotnet-image"] as string | undefined;
+  const githubToken =
+    (args["github-token"] as string | undefined) ??
+    process.env.GH_TOKEN ??
+    process.env.GITHUB_TOKEN;
 
   return {
     repo,
@@ -207,6 +212,7 @@ export async function readOptions(
       : { featureBranch: args["feature-branch"] as string }),
     ciTimeoutMs,
     validationTimeoutMs,
+    ...(githubToken === undefined ? {} : { githubToken }),
   };
 }
 
@@ -268,9 +274,91 @@ export async function readPushUrl(
   return stdout.trim();
 }
 
+async function setOriginUrl(
+  gitPath: string,
+  repositoryPath: string,
+  url: string,
+): Promise<void> {
+  await execFileAsync(gitPath, [
+    "-C",
+    repositoryPath,
+    "remote",
+    "set-url",
+    "origin",
+    url,
+  ]);
+}
+
+/**
+ * GitChangePublisher builds a completely explicit environment for `git`
+ * subprocesses (see createGitEnvironment in git-change-publisher.ts) that
+ * excludes SSH_AUTH_SOCK and any credential-helper configuration, and
+ * exposes no option to inject one. The only way `git push` can authenticate
+ * under that boundary is a credential embedded directly in the remote URL.
+ * When a token is supplied, temporarily rewrites the origin remote to embed
+ * it for the duration of `action`, then restores the original URL
+ * afterward - the credential is never written to a persistent git config.
+ */
+export async function withTemporaryOriginCredential<T>(
+  gitPath: string,
+  repositoryPath: string,
+  originalUrl: string,
+  githubToken: string | undefined,
+  action: (effectiveOriginUrl: string) => Promise<T>,
+): Promise<T> {
+  if (githubToken === undefined) return action(originalUrl);
+  const parsed = parseGitHubOwnerRepo(originalUrl);
+  if (parsed === undefined) {
+    throw new Error(
+      `Unable to embed --github-token: unrecognized origin URL form (${redactUrl(originalUrl)}).`,
+    );
+  }
+  const credentialedUrl = `https://x-access-token:${githubToken}@github.com/${parsed.owner}/${parsed.repo}.git`;
+  await setOriginUrl(gitPath, repositoryPath, credentialedUrl);
+  try {
+    return await action(credentialedUrl);
+  } finally {
+    await setOriginUrl(gitPath, repositoryPath, originalUrl);
+  }
+}
+
 /** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
 export function redactUrl(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
+}
+
+/**
+ * Best-effort secret redaction for untrusted freeform text (an agent's own
+ * summary, or process stdout/stderr) before it is logged. Mirrors the
+ * sanitize() pattern already used in
+ * packages/integrations/src/validation/repository-command-validator.ts for
+ * the same reason - this text does not come from a structured field we
+ * fully control, so it is scrubbed rather than trusted.
+ */
+export function redactSecrets(value: string): string {
+  return value
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|token|password|passwd|secret|credential)s?\s*[=:]\s*)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\bgh[oprsu]_[A-Za-z0-9]{20,}\b/g, "[REDACTED]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED]");
+}
+
+/** Applies redactSecrets to every string value in an arbitrarily nested structure. */
+export function redactSecretsDeep(value: unknown): unknown {
+  if (typeof value === "string") return redactSecrets(value);
+  if (Array.isArray(value)) return value.map(redactSecretsDeep);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactSecretsDeep(entry),
+      ]),
+    );
+  }
+  return value;
 }
 
 /**
@@ -386,65 +474,76 @@ async function main(): Promise<void> {
   console.log(`Workspace: ${workspacePath}`);
   console.log(`Origin: ${redactUrl(originUrl)}`);
 
-  const result = await executeRepositoryRun(
-    {
-      runId,
-      instruction,
-      repository: options.repo,
-      workspace: {
-        issueId: String(options.issue),
-        repositoryPath: options.repositoryPath,
-        baseBranch: "main",
-        featureBranch,
-        workspacePath,
-      },
-    },
-    {
-      workspaceProvisioner: new GitWorkspaceProvisioner(),
-      agentExecution: {
-        executablePath: options.codexPath,
-        allowedWorkspaceRoot: options.workspaceRoot,
-      },
-      validation: {
-        container: {
-          executablePath: options.dockerPath,
-          image: options.containerImage,
+  const result = await withTemporaryOriginCredential(
+    options.gitPath,
+    options.repositoryPath,
+    originUrl,
+    options.githubToken,
+    (effectiveOriginUrl) =>
+      executeRepositoryRun(
+        {
+          runId,
+          instruction,
+          repository: options.repo,
+          workspace: {
+            issueId: String(options.issue),
+            repositoryPath: options.repositoryPath,
+            baseBranch: "main",
+            featureBranch,
+            workspacePath,
+          },
         },
-        timeoutMs: options.validationTimeoutMs,
-        ...(options.bunImage === undefined && options.dotnetImage === undefined
-          ? {}
-          : {
-              runtimeImages: {
-                ...(options.bunImage === undefined
-                  ? {}
-                  : { bun: options.bunImage }),
-                ...(options.dotnetImage === undefined
-                  ? {}
-                  : { dotnet: options.dotnetImage }),
-              },
-            }),
-      },
-      gitPublication: {
-        gitExecutablePath: options.gitPath,
-        expectedOriginUrl: originUrl,
-      },
-      pullRequestPublication: {
-        executablePath: options.ghPath,
-        requiredActor: options.requiredActor,
-      },
-      ciObservation: {
-        executablePath: options.ghPath,
-        timeoutMs: options.ciTimeoutMs,
-      },
-    },
+        {
+          workspaceProvisioner: new GitWorkspaceProvisioner(),
+          agentExecution: {
+            executablePath: options.codexPath,
+            allowedWorkspaceRoot: options.workspaceRoot,
+          },
+          validation: {
+            container: {
+              executablePath: options.dockerPath,
+              image: options.containerImage,
+            },
+            timeoutMs: options.validationTimeoutMs,
+            ...(options.bunImage === undefined &&
+            options.dotnetImage === undefined
+              ? {}
+              : {
+                  runtimeImages: {
+                    ...(options.bunImage === undefined
+                      ? {}
+                      : { bun: options.bunImage }),
+                    ...(options.dotnetImage === undefined
+                      ? {}
+                      : { dotnet: options.dotnetImage }),
+                  },
+                }),
+          },
+          gitPublication: {
+            gitExecutablePath: options.gitPath,
+            expectedOriginUrl: effectiveOriginUrl,
+          },
+          pullRequestPublication: {
+            executablePath: options.ghPath,
+            requiredActor: options.requiredActor,
+          },
+          ciObservation: {
+            executablePath: options.ghPath,
+            timeoutMs: options.ciTimeoutMs,
+          },
+        },
+      ),
   );
 
   console.log(`\nRun finished in state: ${result.run.state}`);
   if (result.run.failure !== undefined) {
-    console.error("Failure:", JSON.stringify(result.run.failure, null, 2));
+    console.error(
+      "Failure:",
+      JSON.stringify(redactSecretsDeep(result.run.failure), null, 2),
+    );
     process.exitCode = 1;
   }
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(redactSecretsDeep(result), null, 2));
 }
 
 const isMainModule =

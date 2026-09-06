@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { URL, fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { git } from "../support/git-fixture.mjs";
 import {
   assertOriginMatchesRepo,
   buildInstruction,
@@ -12,10 +16,13 @@ import {
   parseArgs,
   parseGitHubOwnerRepo,
   readOptions,
+  redactSecrets,
+  redactSecretsDeep,
   redactUrl,
   requireArg,
   resolveExecutable,
   slugify,
+  withTemporaryOriginCredential,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
 
 const execFileAsync = promisify(execFile);
@@ -341,6 +348,128 @@ test("deriveFeatureBranch follows the <developer>/<issue-key>-<short-description
   assert.equal(
     deriveFeatureBranch(42, "Fix the login page"),
     "agent/issue-42-fix-the-login-page",
+  );
+});
+
+test("redactSecrets scrubs bearer tokens, key=value secrets, and GitHub token formats", () => {
+  assert.equal(
+    redactSecrets("Authorization: Bearer abc123"),
+    "Authorization: Bearer [REDACTED]",
+  );
+  assert.equal(
+    redactSecrets("password=hunter2 next=field"),
+    "password=[REDACTED] next=field",
+  );
+  assert.equal(
+    redactSecrets(`token is ${"gh" + "p_" + "a".repeat(36)}`),
+    "token is [REDACTED]",
+  );
+  assert.equal(
+    redactSecrets(`${"github_pat_" + "b".repeat(30)} embedded`),
+    "[REDACTED] embedded",
+  );
+});
+
+test("redactSecrets leaves ordinary text unchanged", () => {
+  assert.equal(
+    redactSecrets("Implemented the login fix as requested."),
+    "Implemented the login fix as requested.",
+  );
+});
+
+test("redactSecretsDeep redacts strings anywhere in a nested structure", () => {
+  const input = {
+    run: { state: "COMPLETED" },
+    agentExecution: {
+      summary: `leaked ${"gh" + "p_" + "c".repeat(36)}`,
+    },
+    list: ["fine", "password=oops"],
+  };
+  const output = redactSecretsDeep(input);
+  assert.equal(output.run.state, "COMPLETED");
+  assert.equal(output.agentExecution.summary, "leaked [REDACTED]");
+  assert.deepEqual(output.list, ["fine", "password=[REDACTED]"]);
+});
+
+test("withTemporaryOriginCredential passes the URL through unchanged and does not touch the remote when no token is given", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-credential-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "https://github.com/o/r.git");
+    const seenUrls = [];
+    await withTemporaryOriginCredential(
+      "git",
+      root,
+      "https://github.com/o/r.git",
+      undefined,
+      async (effectiveOriginUrl) => {
+        seenUrls.push(effectiveOriginUrl);
+      },
+    );
+    assert.deepEqual(seenUrls, ["https://github.com/o/r.git"]);
+    assert.equal(
+      await git(root, "remote", "get-url", "origin"),
+      "https://github.com/o/r.git",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("withTemporaryOriginCredential embeds the token for the action, then restores the original URL even if the action throws", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-credential-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "remote",
+      "add",
+      "origin",
+      "git@github.com:AyfordAndCo/example.git",
+    );
+
+    let sawDuringAction;
+    await assert.rejects(
+      withTemporaryOriginCredential(
+        "git",
+        root,
+        "git@github.com:AyfordAndCo/example.git",
+        "secret-token",
+        async (effectiveOriginUrl) => {
+          sawDuringAction = effectiveOriginUrl;
+          const duringAction = await git(root, "remote", "get-url", "origin");
+          assert.equal(duringAction, effectiveOriginUrl);
+          throw new Error("boom");
+        },
+      ),
+      /boom/,
+    );
+
+    assert.equal(
+      sawDuringAction,
+      "https://x-access-token:secret-token@github.com/AyfordAndCo/example.git",
+    );
+    assert.equal(
+      await git(root, "remote", "get-url", "origin"),
+      "git@github.com:AyfordAndCo/example.git",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("withTemporaryOriginCredential rejects an unrecognized origin form when a token is given", async () => {
+  await assert.rejects(
+    withTemporaryOriginCredential(
+      "git",
+      "/abs/repo",
+      "not-a-url",
+      "secret-token",
+      async () => {
+        throw new Error("action should not run");
+      },
+    ),
+    /Unable to embed --github-token/,
   );
 });
 
