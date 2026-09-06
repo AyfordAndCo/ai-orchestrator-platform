@@ -8,12 +8,14 @@ import test from "node:test";
 import {
   assertOriginMatchesRepo,
   buildInstruction,
+  deriveFeatureBranch,
   parseArgs,
   parseGitHubOwnerRepo,
   readOptions,
   redactUrl,
   requireArg,
   resolveExecutable,
+  slugify,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
 
 const execFileAsync = promisify(execFile);
@@ -168,7 +170,10 @@ test("readOptions rejects a non-integer or non-positive --validation-timeout-ms"
 test("readOptions applies documented defaults", async () => {
   const options = await readOptions(baseArgs());
   assert.equal(options.requiredActor, "allanayford-dev");
-  assert.equal(options.featureBranch, "agent/issue-42");
+  // featureBranch is undefined unless explicitly passed: the default is
+  // derived from the fetched issue title (deriveFeatureBranch), which
+  // readOptions itself has no access to.
+  assert.equal(options.featureBranch, undefined);
   assert.equal(options.ciTimeoutMs, 20 * 60 * 1000);
   assert.equal(options.validationTimeoutMs, 10 * 60 * 1000);
   assert.equal(options.dockerPath, "/abs/docker");
@@ -304,6 +309,38 @@ test("assertOriginMatchesRepo fails closed on an unrecognized origin form", () =
   assert.throws(
     () => assertOriginMatchesRepo("not-a-url", "AyfordAndCo/example"),
     /Unable to verify/,
+  );
+});
+
+test("assertOriginMatchesRepo also catches a mismatched separate push URL", () => {
+  // git push honors remote.origin.pushurl when configured, which can point
+  // at a different repository than the fetch URL. Callers are expected to
+  // call this a second time with the push URL; verify that call rejects
+  // the same way the fetch-URL check would.
+  assert.throws(
+    () =>
+      assertOriginMatchesRepo(
+        "git@github.com:SomeoneElse/other.git",
+        "AyfordAndCo/example",
+      ),
+    /does not match --repo/,
+  );
+});
+
+test("slugify lowercases, hyphenates, trims, and bounds length", () => {
+  assert.equal(slugify("Fix the Thing!"), "fix-the-thing");
+  assert.equal(slugify("  leading and trailing  "), "leading-and-trailing");
+  assert.equal(slugify("a".repeat(100)), "a".repeat(40));
+});
+
+test("slugify falls back to a non-empty placeholder for an all-punctuation title", () => {
+  assert.equal(slugify("!!!"), "issue");
+});
+
+test("deriveFeatureBranch follows the <developer>/<issue-key>-<short-description> convention", () => {
+  assert.equal(
+    deriveFeatureBranch(42, "Fix the login page"),
+    "agent/issue-42-fix-the-login-page",
   );
 });
 

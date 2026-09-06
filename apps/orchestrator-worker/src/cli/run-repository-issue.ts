@@ -64,7 +64,7 @@ export interface CliOptions {
   readonly bunImage?: string;
   readonly dotnetImage?: string;
   readonly requiredActor: string;
-  readonly featureBranch: string;
+  readonly featureBranch?: string;
   readonly ciTimeoutMs: number;
   readonly validationTimeoutMs: number;
 }
@@ -202,8 +202,9 @@ export async function readOptions(
     ...(dotnetImage === undefined ? {} : { dotnetImage }),
     requiredActor:
       (args["required-actor"] as string | undefined) ?? "allanayford-dev",
-    featureBranch:
-      (args["feature-branch"] as string | undefined) ?? `agent/issue-${issue}`,
+    ...(args["feature-branch"] === undefined
+      ? {}
+      : { featureBranch: args["feature-branch"] as string }),
     ciTimeoutMs,
     validationTimeoutMs,
   };
@@ -241,6 +242,27 @@ export async function readOriginUrl(
     repositoryPath,
     "remote",
     "get-url",
+    "origin",
+  ]);
+  return stdout.trim();
+}
+
+/**
+ * `git push` honors `remote.origin.pushurl` when set, which can differ from
+ * the fetch URL `readOriginUrl` reads. Falls back to the fetch URL when no
+ * separate push URL is configured (git's own default), so this always
+ * reflects what `git push origin` will actually target.
+ */
+export async function readPushUrl(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<string> {
+  const { stdout } = await execFileAsync(gitPath, [
+    "-C",
+    repositoryPath,
+    "remote",
+    "get-url",
+    "--push",
     "origin",
   ]);
   return stdout.trim();
@@ -296,6 +318,26 @@ export function assertOriginMatchesRepo(originUrl: string, repo: string): void {
   }
 }
 
+export function slugify(text: string, maxLength = 40): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength)
+    .replace(/-+$/g, "");
+  return slug.length > 0 ? slug : "issue";
+}
+
+/**
+ * Follows this repository's branch-naming convention,
+ * `<developer>/<issue-key>-<short-description>` (AGENTS.md), using "agent"
+ * as the developer segment and a slug of the issue title as the
+ * description.
+ */
+export function deriveFeatureBranch(issue: number, title: string): string {
+  return `agent/issue-${issue}-${slugify(title)}`;
+}
+
 export function buildInstruction(issue: number, summary: IssueSummary): string {
   return [
     `Implement GitHub issue #${issue}: ${summary.title}`,
@@ -322,18 +364,25 @@ async function main(): Promise<void> {
     options.issue,
   );
   const instruction = buildInstruction(options.issue, issueSummary);
+  const featureBranch =
+    options.featureBranch ??
+    deriveFeatureBranch(options.issue, issueSummary.title);
 
   const originUrl = await readOriginUrl(
     options.gitPath,
     options.repositoryPath,
   );
   assertOriginMatchesRepo(originUrl, options.repo);
+  const pushUrl = await readPushUrl(options.gitPath, options.repositoryPath);
+  if (pushUrl !== originUrl) {
+    assertOriginMatchesRepo(pushUrl, options.repo);
+  }
 
   const runId = randomUUID();
   const workspacePath = `${options.workspaceRoot}/run-${runId}`;
 
   console.log(`Run ${runId}`);
-  console.log(`Feature branch: ${options.featureBranch}`);
+  console.log(`Feature branch: ${featureBranch}`);
   console.log(`Workspace: ${workspacePath}`);
   console.log(`Origin: ${redactUrl(originUrl)}`);
 
@@ -346,7 +395,7 @@ async function main(): Promise<void> {
         issueId: String(options.issue),
         repositoryPath: options.repositoryPath,
         baseBranch: "main",
-        featureBranch: options.featureBranch,
+        featureBranch,
         workspacePath,
       },
     },
