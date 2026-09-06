@@ -574,6 +574,54 @@ export async function assertNoCommitSigning(
   }
 }
 
+const GIT_CONFIG_BOOLEAN_PATTERN = /^(?:true|false|1|0|yes|no|on|off)$/i;
+
+/**
+ * `core.fsmonitor` set to anything other than a boolean is a command git
+ * runs to query filesystem changes - including during the `git status`
+ * GitChangePublisher.inspect() runs on the host. `core.sshCommand` is
+ * always a command, used for the `git push` GitChangePublisher.push() runs.
+ * Either pointed at a tracked (agent-editable) script gets that script
+ * executed with full host privileges, the same class of risk as hooks,
+ * filters, and commit signing. This is a preflight mitigation, not a
+ * complete fix, for the same reason those are: it only catches
+ * configuration already present before the run starts.
+ */
+export async function assertNoExecutableGitConfig(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<void> {
+  const fsmonitor = await readLocalConfigValue(
+    gitPath,
+    repositoryPath,
+    "core.fsmonitor",
+  );
+  const sshCommand = await readLocalConfigValue(
+    gitPath,
+    repositoryPath,
+    "core.sshCommand",
+  );
+
+  const found: string[] = [];
+  if (fsmonitor !== undefined && !GIT_CONFIG_BOOLEAN_PATTERN.test(fsmonitor)) {
+    found.push(`core.fsmonitor=${fsmonitor}`);
+  }
+  if (sshCommand !== undefined) {
+    found.push(`core.sshCommand=${sshCommand}`);
+  }
+
+  if (found.length > 0) {
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has executable git config set ` +
+        `(${found.join(", ")}). GitChangePublisher runs git status/push on ` +
+        "the host, so an agent-modified script referenced here would " +
+        "execute with full host privileges. Unset it first: " +
+        "git config --local --unset core.fsmonitor / core.sshCommand as " +
+        "applicable.",
+    );
+  }
+}
+
 /** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
 export function redactUrl(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
@@ -822,6 +870,7 @@ async function main(): Promise<void> {
   await assertNoCustomGitHooks(options.gitPath, options.repositoryPath);
   await assertNoActiveGitFilters(options.gitPath, options.repositoryPath);
   await assertNoCommitSigning(options.gitPath, options.repositoryPath);
+  await assertNoExecutableGitConfig(options.gitPath, options.repositoryPath);
 
   console.log(`Fetching issue #${options.issue} from ${options.repo}...`);
   const issueSummary = await fetchIssue(

@@ -14,6 +14,7 @@ import {
   assertNoCommitSigning,
   assertNoCustomGitHooks,
   assertNoEmbeddedCredentials,
+  assertNoExecutableGitConfig,
   assertOriginMatchesRepo,
   buildInstruction,
   deriveFeatureBranch,
@@ -726,6 +727,61 @@ test("assertNoCommitSigning refuses to run when a gpg program is configured loca
     await assert.rejects(
       assertNoCommitSigning("git", root),
       /gpg\.program=\/workspace\/fake-gpg/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig passes when neither core.fsmonitor nor core.sshCommand is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await assert.doesNotReject(assertNoExecutableGitConfig("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig passes when core.fsmonitor is a plain boolean", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "--local", "core.fsmonitor", "true");
+    await assert.doesNotReject(assertNoExecutableGitConfig("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig refuses to run when core.fsmonitor is a command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "core.fsmonitor",
+      "./tracked-script.sh",
+    );
+    await assert.rejects(
+      assertNoExecutableGitConfig("git", root),
+      /core\.fsmonitor=\.\/tracked-script\.sh/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoExecutableGitConfig refuses to run when core.sshCommand is configured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "--local", "core.sshCommand", "./tracked-ssh.sh");
+    await assert.rejects(
+      assertNoExecutableGitConfig("git", root),
+      /core\.sshCommand=\.\/tracked-ssh\.sh/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

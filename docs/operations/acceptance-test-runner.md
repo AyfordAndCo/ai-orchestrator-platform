@@ -47,20 +47,23 @@ one before running this.
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
 - The target repository must have no active git hooks, git filter
-  commands, or commit signing configured. `GitChangePublisher`'s
+  commands, commit signing, or other executable git config
+  (`core.fsmonitor`/`core.sshCommand`) configured. `GitChangePublisher`'s
   commit/push never pass `--no-verify`, so a repository that points
   `core.hooksPath` into its tracked tree (as Husky does), one with an
   ordinary hook file already sitting in its default hooks directory, one
   with a local `filter.<name>.clean`/`smudge`/`process` command configured
   (e.g. by git-lfs) that a tracked `.gitattributes` entry can route a file
-  through, or one with `commit.gpgSign`/`gpg.program` (or its ssh/x509
-  equivalents) configured, would let agent-modified code execute with full
-  host privileges during `git add`/`commit`/`push`, bypassing both the
-  Codex and validation sandboxes. This runner refuses to start if it
-  detects any of these. This is a preflight mitigation, not a complete fix
-  — it only catches something already configured before the run starts,
-  not something the agent sets up during its own execution. A complete fix
-  belongs in `GitChangePublisher` itself.
+  through, one with `commit.gpgSign`/`gpg.program` (or its ssh/x509
+  equivalents) configured, or one with `core.fsmonitor` set to a command
+  (rather than a plain boolean) or `core.sshCommand` configured, would let
+  agent-modified code execute with full host privileges during `git
+add`/`status`/`commit`/`push`, bypassing both the Codex and validation
+  sandboxes. This runner refuses to start if it detects any of these. This
+  is a preflight mitigation, not a complete fix — it only catches
+  something already configured before the run starts, not something the
+  agent sets up during its own execution. A complete fix belongs in
+  `GitChangePublisher` itself.
 - Remote URLs are read with global/system git config isolated
   (`GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL=/dev/null`), matching
   `GitChangePublisher`'s own environment: an ambient `url.*.insteadOf`
