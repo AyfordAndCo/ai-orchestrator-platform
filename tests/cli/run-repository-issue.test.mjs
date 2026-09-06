@@ -24,7 +24,6 @@ import {
   requireArg,
   resolveExecutable,
   slugify,
-  withTemporaryOriginCredential,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
 
 const execFileAsync = promisify(execFile);
@@ -406,85 +405,10 @@ test("redactSecretsDeep redacts strings anywhere in a nested structure", () => {
   assert.deepEqual(output.list, ["fine", "password=[REDACTED]"]);
 });
 
-test("withTemporaryOriginCredential passes the URL through unchanged and does not touch the remote when no token is given", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cli-credential-"));
-  try {
-    await git(root, "init", "-b", "main");
-    await git(root, "remote", "add", "origin", "https://github.com/o/r.git");
-    const seenUrls = [];
-    await withTemporaryOriginCredential(
-      "git",
-      root,
-      "https://github.com/o/r.git",
-      undefined,
-      async (effectiveOriginUrl) => {
-        seenUrls.push(effectiveOriginUrl);
-      },
-    );
-    assert.deepEqual(seenUrls, ["https://github.com/o/r.git"]);
-    assert.equal(
-      await git(root, "remote", "get-url", "origin"),
-      "https://github.com/o/r.git",
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("withTemporaryOriginCredential embeds the token for the action, then restores the original URL even if the action throws", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cli-credential-"));
-  try {
-    await git(root, "init", "-b", "main");
-    await git(
-      root,
-      "remote",
-      "add",
-      "origin",
-      "git@github.com:AyfordAndCo/example.git",
-    );
-
-    let sawDuringAction;
-    await assert.rejects(
-      withTemporaryOriginCredential(
-        "git",
-        root,
-        "git@github.com:AyfordAndCo/example.git",
-        "secret-token",
-        async (effectiveOriginUrl) => {
-          sawDuringAction = effectiveOriginUrl;
-          const duringAction = await git(root, "remote", "get-url", "origin");
-          assert.equal(duringAction, effectiveOriginUrl);
-          throw new Error("boom");
-        },
-      ),
-      /boom/,
-    );
-
-    assert.equal(
-      sawDuringAction,
-      "https://x-access-token:secret-token@github.com/AyfordAndCo/example.git",
-    );
-    assert.equal(
-      await git(root, "remote", "get-url", "origin"),
-      "git@github.com:AyfordAndCo/example.git",
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("withTemporaryOriginCredential rejects an unrecognized origin form when a token is given", async () => {
+test("readOptions rejects --github-token outright: embedding a credential in shared .git/config would expose it to the agent's own workspace", async () => {
   await assert.rejects(
-    withTemporaryOriginCredential(
-      "git",
-      "/abs/repo",
-      "not-a-url",
-      "secret-token",
-      async () => {
-        throw new Error("action should not run");
-      },
-    ),
-    /Unable to embed --github-token/,
+    readOptions(baseArgs({ "github-token": "secret-token" })),
+    /--github-token is not supported/,
   );
 });
 

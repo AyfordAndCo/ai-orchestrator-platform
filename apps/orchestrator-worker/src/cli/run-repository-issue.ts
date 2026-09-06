@@ -68,7 +68,6 @@ export interface CliOptions {
   readonly featureBranch?: string;
   readonly ciTimeoutMs: number;
   readonly validationTimeoutMs: number;
-  readonly githubToken?: string;
 }
 
 export function requireArg(name: string, value: string | undefined): string {
@@ -185,10 +184,15 @@ export async function readOptions(
   );
   const bunImage = args["bun-image"] as string | undefined;
   const dotnetImage = args["dotnet-image"] as string | undefined;
-  const githubToken =
-    (args["github-token"] as string | undefined) ??
-    process.env.GH_TOKEN ??
-    process.env.GITHUB_TOKEN;
+  if (args["github-token"] !== undefined) {
+    throw new RangeError(
+      "--github-token is not supported: embedding a credential in the " +
+        "repository's remote URL would put it in the shared .git/config an " +
+        "agent's own workspace can read (see issue #33). git push " +
+        "authentication for the target repository is a prerequisite you " +
+        "must arrange yourself.",
+    );
+  }
 
   return {
     repo,
@@ -221,7 +225,6 @@ export async function readOptions(
       : { featureBranch: args["feature-branch"] as string }),
     ciTimeoutMs,
     validationTimeoutMs,
-    ...(githubToken === undefined ? {} : { githubToken }),
   };
 }
 
@@ -346,54 +349,6 @@ export async function assertNoCustomGitHooks(
         "with full host privileges. Unset it first: " +
         "git config --unset core.hooksPath",
     );
-  }
-}
-
-async function setOriginUrl(
-  gitPath: string,
-  repositoryPath: string,
-  url: string,
-): Promise<void> {
-  await execFileAsync(gitPath, [
-    "-C",
-    repositoryPath,
-    "remote",
-    "set-url",
-    "origin",
-    url,
-  ]);
-}
-
-/**
- * GitChangePublisher builds a completely explicit environment for `git`
- * subprocesses (see createGitEnvironment in git-change-publisher.ts) that
- * excludes SSH_AUTH_SOCK and any credential-helper configuration, and
- * exposes no option to inject one. The only way `git push` can authenticate
- * under that boundary is a credential embedded directly in the remote URL.
- * When a token is supplied, temporarily rewrites the origin remote to embed
- * it for the duration of `action`, then restores the original URL
- * afterward - the credential is never written to a persistent git config.
- */
-export async function withTemporaryOriginCredential<T>(
-  gitPath: string,
-  repositoryPath: string,
-  originalUrl: string,
-  githubToken: string | undefined,
-  action: (effectiveOriginUrl: string) => Promise<T>,
-): Promise<T> {
-  if (githubToken === undefined) return action(originalUrl);
-  const parsed = parseGitHubOwnerRepo(originalUrl);
-  if (parsed === undefined) {
-    throw new Error(
-      `Unable to embed --github-token: unrecognized origin URL form (${redactUrl(originalUrl)}).`,
-    );
-  }
-  const credentialedUrl = `https://x-access-token:${githubToken}@github.com/${parsed.owner}/${parsed.repo}.git`;
-  await setOriginUrl(gitPath, repositoryPath, credentialedUrl);
-  try {
-    return await action(credentialedUrl);
-  } finally {
-    await setOriginUrl(gitPath, repositoryPath, originalUrl);
   }
 }
 
@@ -546,65 +501,57 @@ async function main(): Promise<void> {
   console.log(`Workspace: ${workspacePath}`);
   console.log(`Origin: ${redactUrl(originUrl)}`);
 
-  const result = await withTemporaryOriginCredential(
-    options.gitPath,
-    options.repositoryPath,
-    originUrl,
-    options.githubToken,
-    (effectiveOriginUrl) =>
-      executeRepositoryRun(
-        {
-          runId,
-          instruction,
-          repository: options.repo,
-          workspace: {
-            issueId: String(options.issue),
-            repositoryPath: options.repositoryPath,
-            baseBranch: "main",
-            featureBranch,
-            workspacePath,
-          },
+  const result = await executeRepositoryRun(
+    {
+      runId,
+      instruction,
+      repository: options.repo,
+      workspace: {
+        issueId: String(options.issue),
+        repositoryPath: options.repositoryPath,
+        baseBranch: "main",
+        featureBranch,
+        workspacePath,
+      },
+    },
+    {
+      workspaceProvisioner: new GitWorkspaceProvisioner(),
+      agentExecution: {
+        executablePath: options.codexPath,
+        allowedWorkspaceRoot: options.workspaceRoot,
+      },
+      validation: {
+        container: {
+          executablePath: options.dockerPath,
+          image: options.containerImage,
         },
-        {
-          workspaceProvisioner: new GitWorkspaceProvisioner(),
-          agentExecution: {
-            executablePath: options.codexPath,
-            allowedWorkspaceRoot: options.workspaceRoot,
-          },
-          validation: {
-            container: {
-              executablePath: options.dockerPath,
-              image: options.containerImage,
-            },
-            timeoutMs: options.validationTimeoutMs,
-            ...(options.bunImage === undefined &&
-            options.dotnetImage === undefined
-              ? {}
-              : {
-                  runtimeImages: {
-                    ...(options.bunImage === undefined
-                      ? {}
-                      : { bun: options.bunImage }),
-                    ...(options.dotnetImage === undefined
-                      ? {}
-                      : { dotnet: options.dotnetImage }),
-                  },
-                }),
-          },
-          gitPublication: {
-            gitExecutablePath: options.gitPath,
-            expectedOriginUrl: effectiveOriginUrl,
-          },
-          pullRequestPublication: {
-            executablePath: options.ghPath,
-            requiredActor: options.requiredActor,
-          },
-          ciObservation: {
-            executablePath: options.ghPath,
-            timeoutMs: options.ciTimeoutMs,
-          },
-        },
-      ),
+        timeoutMs: options.validationTimeoutMs,
+        ...(options.bunImage === undefined && options.dotnetImage === undefined
+          ? {}
+          : {
+              runtimeImages: {
+                ...(options.bunImage === undefined
+                  ? {}
+                  : { bun: options.bunImage }),
+                ...(options.dotnetImage === undefined
+                  ? {}
+                  : { dotnet: options.dotnetImage }),
+              },
+            }),
+      },
+      gitPublication: {
+        gitExecutablePath: options.gitPath,
+        expectedOriginUrl: originUrl,
+      },
+      pullRequestPublication: {
+        executablePath: options.ghPath,
+        requiredActor: options.requiredActor,
+      },
+      ciObservation: {
+        executablePath: options.ghPath,
+        timeoutMs: options.ciTimeoutMs,
+      },
+    },
   );
 
   console.log(`\nRun finished in state: ${result.run.state}`);
