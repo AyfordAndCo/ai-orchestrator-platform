@@ -37,6 +37,7 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_CI_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_VALIDATION_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_AGENT_TIMEOUT_MS = 20 * 60 * 1000;
 
 function parsePositiveIntegerArg(
   args: Record<string, string | boolean>,
@@ -68,6 +69,7 @@ export interface CliOptions {
   readonly featureBranch?: string;
   readonly ciTimeoutMs: number;
   readonly validationTimeoutMs: number;
+  readonly agentTimeoutMs: number;
 }
 
 export function requireArg(name: string, value: string | undefined): string {
@@ -182,6 +184,11 @@ export async function readOptions(
     "validation-timeout-ms",
     DEFAULT_VALIDATION_TIMEOUT_MS,
   );
+  const agentTimeoutMs = parsePositiveIntegerArg(
+    args,
+    "agent-timeout-ms",
+    DEFAULT_AGENT_TIMEOUT_MS,
+  );
   const bunImage = args["bun-image"] as string | undefined;
   const dotnetImage = args["dotnet-image"] as string | undefined;
   if (args["github-token"] !== undefined) {
@@ -225,6 +232,7 @@ export async function readOptions(
       : { featureBranch: args["feature-branch"] as string }),
     ciTimeoutMs,
     validationTimeoutMs,
+    agentTimeoutMs,
   };
 }
 
@@ -519,6 +527,7 @@ async function main(): Promise<void> {
       agentExecution: {
         executablePath: options.codexPath,
         allowedWorkspaceRoot: options.workspaceRoot,
+        timeoutMs: options.agentTimeoutMs,
       },
       validation: {
         container: {

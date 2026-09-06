@@ -192,6 +192,17 @@ test("readOptions rejects a non-integer or non-positive --validation-timeout-ms"
   );
 });
 
+test("readOptions rejects a non-integer or non-positive --agent-timeout-ms", async () => {
+  await assert.rejects(
+    readOptions(baseArgs({ "agent-timeout-ms": "soon" })),
+    /--agent-timeout-ms must be a positive integer/,
+  );
+  await assert.rejects(
+    readOptions(baseArgs({ "agent-timeout-ms": "0" })),
+    /--agent-timeout-ms must be a positive integer/,
+  );
+});
+
 test("readOptions applies documented defaults", async () => {
   const options = await readOptions(baseArgs());
   assert.equal(options.requiredActor, "allanayford-dev");
@@ -201,6 +212,7 @@ test("readOptions applies documented defaults", async () => {
   assert.equal(options.featureBranch, undefined);
   assert.equal(options.ciTimeoutMs, 20 * 60 * 1000);
   assert.equal(options.validationTimeoutMs, 10 * 60 * 1000);
+  assert.equal(options.agentTimeoutMs, 20 * 60 * 1000);
   assert.equal(options.dockerPath, process.execPath);
   assert.equal(options.bunImage, undefined);
   assert.equal(options.dotnetImage, undefined);
@@ -210,13 +222,14 @@ test("readOptions applies documented defaults", async () => {
   );
 });
 
-test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeout-ms, --validation-timeout-ms, --bun-image, and --dotnet-image overrides", async () => {
+test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeout-ms, --validation-timeout-ms, --agent-timeout-ms, --bun-image, and --dotnet-image overrides", async () => {
   const options = await readOptions(
     baseArgs({
       "required-actor": "some-bot",
       "feature-branch": "agent/custom-branch",
       "ci-timeout-ms": "5000",
       "validation-timeout-ms": "6000",
+      "agent-timeout-ms": "7000",
       "bun-image": "docker.io/example/bun@sha256:" + "b".repeat(64),
       "dotnet-image": "docker.io/example/dotnet@sha256:" + "c".repeat(64),
     }),
@@ -225,6 +238,7 @@ test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeo
   assert.equal(options.featureBranch, "agent/custom-branch");
   assert.equal(options.ciTimeoutMs, 5000);
   assert.equal(options.validationTimeoutMs, 6000);
+  assert.equal(options.agentTimeoutMs, 7000);
   assert.equal(
     options.bunImage,
     "docker.io/example/bun@sha256:" + "b".repeat(64),

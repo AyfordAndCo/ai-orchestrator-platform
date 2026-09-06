@@ -106,6 +106,7 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
 | `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                |
 | `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                     |
 | `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                  |
+| `--agent-timeout-ms`                                          | no          | `1200000` (20 min)                      | how long Codex may run before treating the execution as failed                                                  |
 
 Passing `--base-branch`, `--allow-host-validation`, or `--github-token` is
 rejected outright with an explanatory error — none of these are supported
