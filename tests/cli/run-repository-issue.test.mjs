@@ -10,12 +10,14 @@ import test from "node:test";
 
 import { git } from "../support/git-fixture.mjs";
 import {
+  assertNoCustomGitHooks,
   assertOriginMatchesRepo,
   buildInstruction,
   deriveFeatureBranch,
   parseArgs,
   parseGitHubOwnerRepo,
   readOptions,
+  readPushUrls,
   redactSecrets,
   redactSecretsDeep,
   redactUrl,
@@ -33,15 +35,18 @@ const cliPath = fileURLToPath(
   ),
 );
 
+// readOptions has no injectable access() seam, so its own executable-path
+// arguments must point at something that really exists; process.execPath
+// (the running node binary) is guaranteed to.
 const explicitExecutablePaths = [
   "--codex-path",
-  "/abs/codex",
+  process.execPath,
   "--git-path",
-  "/abs/git",
+  process.execPath,
   "--gh-path",
-  "/abs/gh",
+  process.execPath,
   "--docker-path",
-  "/abs/docker",
+  process.execPath,
 ];
 
 function baseArgs(overrides = {}) {
@@ -78,8 +83,22 @@ test("parseArgs reads --flag value pairs and treats a trailing/next-flag flag as
   });
 });
 
-test("resolveExecutable returns an explicit absolute path unchanged", async () => {
-  assert.equal(await resolveExecutable("codex", "/abs/codex"), "/abs/codex");
+test("resolveExecutable returns an explicit absolute path unchanged when it exists", async () => {
+  const fakeAccess = async () => {};
+  assert.equal(
+    await resolveExecutable("codex", "/abs/codex", execFileAsync, fakeAccess),
+    "/abs/codex",
+  );
+});
+
+test("resolveExecutable rejects an explicit absolute path that does not exist", async () => {
+  const fakeAccess = async () => {
+    throw new Error("ENOENT");
+  };
+  await assert.rejects(
+    resolveExecutable("codex", "/abs/missing-codex", execFileAsync, fakeAccess),
+    /--codex-path does not exist/,
+  );
 });
 
 test("resolveExecutable rejects an explicit relative path", async () => {
@@ -183,7 +202,7 @@ test("readOptions applies documented defaults", async () => {
   assert.equal(options.featureBranch, undefined);
   assert.equal(options.ciTimeoutMs, 20 * 60 * 1000);
   assert.equal(options.validationTimeoutMs, 10 * 60 * 1000);
-  assert.equal(options.dockerPath, "/abs/docker");
+  assert.equal(options.dockerPath, process.execPath);
   assert.equal(options.bunImage, undefined);
   assert.equal(options.dotnetImage, undefined);
   assert.equal(
@@ -239,10 +258,6 @@ test("buildInstruction includes the issue number, title, and body", () => {
   assert.match(instruction, /Implement GitHub issue #7: Fix the thing/);
   assert.match(instruction, /Do the specific fix\./);
   assert.match(instruction, /Do not perform unrelated refactors\./);
-  assert.match(
-    instruction,
-    /ensure the repository's declared dependencies are\s+installed/,
-  );
 });
 
 test("redactUrl strips embedded userinfo from an HTTPS origin", () => {
@@ -471,6 +486,63 @@ test("withTemporaryOriginCredential rejects an unrecognized origin form when a t
     ),
     /Unable to embed --github-token/,
   );
+});
+
+test("readPushUrls returns every configured push URL, not just the first", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-pushurls-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "https://github.com/o/r.git");
+    await git(
+      root,
+      "remote",
+      "set-url",
+      "--add",
+      "--push",
+      "origin",
+      "https://github.com/o/r.git",
+    );
+    await git(
+      root,
+      "remote",
+      "set-url",
+      "--add",
+      "--push",
+      "origin",
+      "https://github.com/someone-else/other.git",
+    );
+    const urls = await readPushUrls("git", root);
+    assert.deepEqual(urls, [
+      "https://github.com/o/r.git",
+      "https://github.com/someone-else/other.git",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCustomGitHooks passes when core.hooksPath is unset (the default)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-hooks-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await assert.doesNotReject(assertNoCustomGitHooks("git", root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCustomGitHooks refuses to run when core.hooksPath points into the tracked tree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-hooks-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "core.hooksPath", ".husky");
+    await assert.rejects(
+      assertNoCustomGitHooks("git", root),
+      /core\.hooksPath=\.husky/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("running the compiled file directly actually executes main() (entrypoint detection works on this platform)", async () => {

@@ -30,18 +30,31 @@ one before running this.
 - Codex CLI, `git`, `gh`, and a Docker (or compatible) executable on `PATH`
   (or pass their absolute paths explicitly), plus a `sha256`-pinned
   validation container image.
-- The validation container has no network access. `RepositoryCommandValidator`
-  does not install dependencies, so the instruction sent to the agent asks it
-  to install the repository's dependencies itself before finishing (Codex's
-  own execution sandbox does allow network access, unlike the validation
-  container) — a target repository whose canonical validation needs installed
-  dependencies (most Node repositories) will fail validation if the agent
-  skips this.
+- **A target repository whose canonical validation needs installed
+  dependencies is not currently supported end-to-end.** The validation
+  container has no network access and doesn't install dependencies, so
+  they would need to be present before validation runs — but
+  `GitChangePublisher.inspect()` enumerates ignored paths with a hard
+  32KB output cap (`packages/integrations/src/git/git-change-publisher.ts`),
+  which any real `node_modules` tree overflows, killing the run right after
+  commit. Neither side of that gap is something this CLI can safely work
+  around; both need a production-level fix (a dependency-provisioning
+  boundary, and/or a larger/streamed inspection buffer) before a typical
+  Node repository can complete a real run here.
 - A bun or dotnet target additionally needs `--bun-image` / `--dotnet-image`
   (each `sha256`-pinned) — `RepositoryCommandValidator` fails closed on those
   runtimes without a dedicated image, rather than running them in the default
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
+- The target repository's `core.hooksPath` must be unset (git's default).
+  `GitChangePublisher`'s commit/push never pass `--no-verify`, so a
+  repository that points hooks into its tracked tree (as Husky does) would
+  let an agent-modified hook execute with full host privileges, bypassing
+  both the Codex and validation sandboxes. This runner refuses to start if
+  it detects a configured `core.hooksPath`. This is a preflight mitigation,
+  not a complete fix — it only catches a hooksPath already configured
+  before the run starts, not one the agent sets during its own execution.
+  A complete fix belongs in `GitChangePublisher` itself.
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.

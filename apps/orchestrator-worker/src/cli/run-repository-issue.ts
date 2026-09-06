@@ -24,6 +24,7 @@
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
@@ -100,10 +101,18 @@ export async function resolveExecutable(
   name: string,
   explicit: string | undefined,
   execFileImplementation: typeof execFileAsync = execFileAsync,
+  accessImplementation: typeof access = access,
 ): Promise<string> {
   if (explicit !== undefined) {
     if (!isAbsolute(explicit)) {
       throw new RangeError(`--${name}-path must be an absolute path`);
+    }
+    try {
+      await accessImplementation(explicit);
+    } catch (error) {
+      throw new Error(`--${name}-path does not exist: ${explicit}`, {
+        cause: error,
+      });
     }
     return explicit;
   }
@@ -254,24 +263,90 @@ export async function readOriginUrl(
 }
 
 /**
- * `git push` honors `remote.origin.pushurl` when set, which can differ from
- * the fetch URL `readOriginUrl` reads. Falls back to the fetch URL when no
- * separate push URL is configured (git's own default), so this always
- * reflects what `git push origin` will actually target.
+ * `git push origin` publishes to every configured push URL, not just the
+ * first: `remote.origin.pushurl` can be set multiple times
+ * (`git remote set-url --add --push`), and `--all` is required to see all
+ * of them (plain `get-url --push` returns only the first). Falls back to
+ * the fetch URL when no separate push URL is configured (git's own
+ * default), so this always reflects every destination `git push origin`
+ * will actually target.
  */
-export async function readPushUrl(
+export async function readPushUrls(
   gitPath: string,
   repositoryPath: string,
-): Promise<string> {
+): Promise<readonly string[]> {
   const { stdout } = await execFileAsync(gitPath, [
     "-C",
     repositoryPath,
     "remote",
     "get-url",
     "--push",
+    "--all",
     "origin",
   ]);
-  return stdout.trim();
+  return stdout
+    .split(/\r?\n/)
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0);
+}
+
+/**
+ * GitChangePublisher's commit/push never pass --no-verify, so if the
+ * workspace's core.hooksPath points into the tracked working tree (as
+ * tools like Husky configure), an agent could modify a hook script there
+ * and have it executed with full host privileges during commit/push,
+ * bypassing both the Codex and validation sandboxes entirely. The default
+ * (core.hooksPath unset, hooks live in .git/hooks/) is safe, since that
+ * directory is never part of the tracked working tree an agent edits.
+ */
+async function readLocalHooksPath(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<string | undefined> {
+  try {
+    // --local only: GitChangePublisher's sanitized environment
+    // (GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM=1) already
+    // neutralizes any global or system core.hooksPath, including the
+    // operator's own. Only a hooksPath set in this repository's own
+    // (tracked-tree-adjacent) local config can still affect it.
+    const { stdout } = await execFileAsync(gitPath, [
+      "-C",
+      repositoryPath,
+      "config",
+      "--local",
+      "--get",
+      "core.hooksPath",
+    ]);
+    return stdout.trim();
+  } catch {
+    // `git config --get` exits non-zero when the key is unset - the safe
+    // default.
+    return undefined;
+  }
+}
+
+/**
+ * This is a preflight mitigation, not a complete fix: it only catches a
+ * hooksPath already configured on the source repository before the run
+ * starts. GitChangePublisher's commit/push still don't pass --no-verify, so
+ * an agent that reconfigures core.hooksPath locally during its own
+ * execution would not be caught by this check. A complete fix belongs in
+ * GitChangePublisher itself.
+ */
+export async function assertNoCustomGitHooks(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<void> {
+  const hooksPath = await readLocalHooksPath(gitPath, repositoryPath);
+  if (hooksPath !== undefined && hooksPath.length > 0) {
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has core.hooksPath=${hooksPath} ` +
+        "configured. GitChangePublisher's commit/push do not pass " +
+        "--no-verify, so an agent-modified hook script there would execute " +
+        "with full host privileges. Unset it first: " +
+        "git config --unset core.hooksPath",
+    );
+  }
 }
 
 async function setOriginUrl(
@@ -433,17 +508,12 @@ export function buildInstruction(issue: number, summary: IssueSummary): string {
     summary.body,
     "",
     "Make only the change described above. Do not perform unrelated refactors.",
-    "",
-    "Before finishing, ensure the repository's declared dependencies are " +
-      "installed (for example: run the project's package manager install " +
-      "command) so the canonical validation command can run without a " +
-      "network connection. Validation runs afterward in a container with " +
-      "no network access, so any missing dependency must be installed now.",
   ].join("\n");
 }
 
 async function main(): Promise<void> {
   const options = await readOptions(process.argv.slice(2));
+  await assertNoCustomGitHooks(options.gitPath, options.repositoryPath);
 
   console.log(`Fetching issue #${options.issue} from ${options.repo}...`);
   const issueSummary = await fetchIssue(
@@ -461,9 +531,11 @@ async function main(): Promise<void> {
     options.repositoryPath,
   );
   assertOriginMatchesRepo(originUrl, options.repo);
-  const pushUrl = await readPushUrl(options.gitPath, options.repositoryPath);
-  if (pushUrl !== originUrl) {
-    assertOriginMatchesRepo(pushUrl, options.repo);
+  const pushUrls = await readPushUrls(options.gitPath, options.repositoryPath);
+  for (const pushUrl of pushUrls) {
+    if (pushUrl !== originUrl) {
+      assertOriginMatchesRepo(pushUrl, options.repo);
+    }
   }
 
   const runId = randomUUID();
