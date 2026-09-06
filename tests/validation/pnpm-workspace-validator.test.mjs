@@ -28,8 +28,34 @@ import {
   validationErrorCodes,
 } from "../../dist/packages/domain/src/validation/index.js";
 
-import { PnpmWorkspaceValidator } from "../../dist/packages/integrations/src/validation/index.js";
+import {
+  PnpmWorkspaceValidator,
+  resolveExecutableCandidate,
+} from "../../dist/packages/integrations/src/validation/index.js";
 import { git } from "../support/git-fixture.mjs";
+
+test("resolveExecutableCandidate resolves a relative where/which match against the lookup-time cwd", () => {
+  const lookupCwd = process.platform === "win32" ? "C:\\repo" : "/repo";
+  const relativeMatch =
+    process.platform === "win32" ? "bin\\git.exe" : "bin/git";
+
+  assert.equal(
+    resolveExecutableCandidate(relativeMatch, lookupCwd),
+    join(lookupCwd, relativeMatch),
+  );
+});
+
+test("resolveExecutableCandidate leaves an absolute match unchanged", () => {
+  const absoluteMatch =
+    process.platform === "win32"
+      ? "C:\\Program Files\\Git\\cmd\\git.exe"
+      : "/usr/bin/git";
+
+  assert.equal(
+    resolveExecutableCandidate(absoluteMatch, "/some/other/cwd"),
+    absoluteMatch,
+  );
+});
 
 async function createFixture(validationSource) {
   const root = await mkdtemp(join(tmpdir(), "all-313-validation-"));
@@ -100,6 +126,40 @@ process.stderr.write("validation-diagnostic");
     assert.match(result.stderr, /validation-diagnostic/);
 
     assert.ok(result.durationMs >= 0);
+  } finally {
+    await rm(workspacePath, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test("does not let a workspace-planted pnpm shim hijack unsandboxed Windows validation", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip(
+      "Windows-specific: only the shell:true cmd.exe fallback used on " +
+        "win32 searches the workspace cwd before PATH",
+    );
+    return;
+  }
+
+  const workspacePath = await createFixture(`
+process.stdout.write("validation-ok");
+`);
+  const marker = join(workspacePath, "decoy-ran.txt");
+  await writeFile(
+    join(workspacePath, "pnpm.cmd"),
+    `@echo off\r\necho ran > "${marker}"\r\nexit /b 1\r\n`,
+  );
+
+  try {
+    const validator = new PnpmWorkspaceValidator();
+
+    const result = await validator.validate(createWorkspace(workspacePath));
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /validation-ok/);
+    assert.equal(await pathExists(marker), false);
   } finally {
     await rm(workspacePath, {
       recursive: true,
@@ -297,20 +357,35 @@ process.stdout.write("should-not-run");
       environment: { PATH: "" },
     });
 
-    // On Windows, the bare-"pnpm" fallback (see createValidationProcess)
-    // has to go through cmd.exe to resolve a .cmd shim, so a missing pnpm
-    // surfaces as a normal nonzero-exit shell failure (VALIDATION_FAILED)
-    // rather than a spawn-level error (VALIDATION_LAUNCH_FAILED) - both are
-    // stable, recognizable signals that validation could not run pnpm; only
-    // the OS-appropriate one differs.
-    const expectedCode =
+    // On Windows, resolveDefaultPnpmExecutablePath's module-level cache
+    // determines which stable code this surfaces as: cold (this test is the
+    // first to resolve pnpm in this process), the where/which lookup itself
+    // fails against the blanked PATH (VALIDATION_LAUNCH_FAILED); warm
+    // (an earlier test already cached pnpm's absolute path), resolution is
+    // skipped and it falls through to the bare-"pnpm" fallback's cmd.exe
+    // shell, which fails as a normal nonzero exit (VALIDATION_FAILED)
+    // instead. Both are stable, recognizable signals that validation could
+    // not run pnpm; which one applies isn't deterministic across test
+    // ordering, so accept either on Windows. POSIX never resolves pnpm up
+    // front - it always fails at spawn time (VALIDATION_LAUNCH_FAILED).
+    const acceptableCodes =
       process.platform === "win32"
-        ? validationErrorCodes.VALIDATION_FAILED
-        : validationErrorCodes.VALIDATION_LAUNCH_FAILED;
+        ? [
+            validationErrorCodes.VALIDATION_FAILED,
+            validationErrorCodes.VALIDATION_LAUNCH_FAILED,
+          ]
+        : [validationErrorCodes.VALIDATION_LAUNCH_FAILED];
 
     await assert.rejects(
       validator.validate(createWorkspace(workspacePath)),
-      (error) => assertValidationError(error, expectedCode),
+      (error) => {
+        assert.ok(error instanceof WorkspaceValidationError);
+        assert.ok(
+          acceptableCodes.includes(error.code),
+          `unexpected code: ${error.code}`,
+        );
+        return true;
+      },
     );
   } finally {
     if (originalPath === undefined) {

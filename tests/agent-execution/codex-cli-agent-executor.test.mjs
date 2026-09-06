@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import process from "node:process";
 import test from "node:test";
 
@@ -69,7 +69,7 @@ async function createFixture() {
   const codexPath = join(binPath, "codex.mjs");
 
   const fakeCodexSource = `#!${process.execPath}
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 let instruction = "";
@@ -78,11 +78,25 @@ for await (const chunk of process.stdin) {
   instruction += chunk.toString();
 }
 
+// Proves (rather than just asserting via path strings) whether whatever
+// HOME points to actually exposes a file placed under the *ambient* HOME
+// this test set up - see the HOME-isolation test below.
+let sawAmbientHomeMarker = false;
+if (process.env.HOME) {
+  try {
+    await access(join(process.env.HOME, "credential-marker.txt"));
+    sawAmbientHomeMarker = true;
+  } catch {
+    // Expected once HOME is isolated: the marker isn't there.
+  }
+}
+
 const record = {
   args: process.argv.slice(2),
   cwd: process.cwd(),
   env: process.env,
   instruction,
+  sawAmbientHomeMarker,
 };
 
 await writeFile(
@@ -156,6 +170,7 @@ if (instruction === "TEST_AUTH_FAILURE") {
     workspacePath,
     binPath,
     homePath,
+    homeRoot: join(rootPath, "codex-home-root"),
     codexPath,
   };
 }
@@ -239,6 +254,7 @@ test("executes Codex with fixed arguments, exact stdin, workspace cwd, and an al
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     const result = await runWithFixture(fixture, () =>
@@ -284,7 +300,11 @@ test("executes Codex with fixed arguments, exact stdin, workspace cwd, and an al
 
     assert.deepEqual(Object.keys(record.env).sort(), expectedEnvironmentKeys);
 
-    assert.equal(record.env.HOME, fixture.homePath);
+    // HOME must be an isolated directory this class created for this run,
+    // never the ambient/operator HOME the test set via runWithFixture - see
+    // the dedicated isolation test below for the full rationale.
+    assert.notEqual(record.env.HOME, fixture.homePath);
+    assert.ok(record.env.HOME.startsWith(fixture.homeRoot + sep));
 
     assert.equal(record.env.PATH, fixture.binPath);
 
@@ -311,6 +331,60 @@ test("executes Codex with fixed arguments, exact stdin, workspace cwd, and an al
   }
 });
 
+test("isolates Codex's HOME from the operator's real home directory", async () => {
+  const fixture = await createFixture();
+
+  // Stands in for a real operator credential file - e.g. ~/.ssh/id_ed25519
+  // or ~/.config/gh/hosts.yml - that Codex's workspace-write sandbox would
+  // otherwise be able to read (that sandbox restricts writes, not reads).
+  await writeFile(
+    join(fixture.homePath, "credential-marker.txt"),
+    "super-secret\n",
+  );
+
+  try {
+    const executor = new CodexCliAgentExecutor({
+      executablePath: fixture.codexPath,
+      allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
+    });
+
+    await runWithFixture(fixture, () =>
+      executor.execute(
+        createRequest(fixture.workspacePath, "isolated home check"),
+      ),
+    );
+
+    const record = JSON.parse(
+      await readFile(
+        join(fixture.workspacePath, ".codex-test-record.json"),
+        "utf8",
+      ),
+    );
+
+    assert.equal(record.sawAmbientHomeMarker, false);
+    assert.notEqual(record.env.HOME, fixture.homePath);
+    assert.ok(record.env.HOME.startsWith(fixture.homeRoot + sep));
+
+    if (process.platform === "win32") {
+      assert.equal(record.env.USERPROFILE, record.env.HOME);
+      assert.equal(
+        `${record.env.HOMEDRIVE}${record.env.HOMEPATH}`,
+        record.env.HOME,
+      );
+    }
+
+    // Cleaned up after execution - never left behind for a later run to
+    // find or for disk usage to accumulate across many runs.
+    assert.equal(await pathExists(record.env.HOME), false);
+  } finally {
+    await rm(fixture.rootPath, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
 test("rejects a missing workspace before launching Codex", async () => {
   const fixture = await createFixture();
 
@@ -320,6 +394,7 @@ test("rejects a missing workspace before launching Codex", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -351,6 +426,7 @@ test("rejects a non-directory workspace", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -391,6 +467,7 @@ test("rejects a symbolic-link workspace", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -422,6 +499,7 @@ test("rejects a workspace outside the configured workspace root", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -449,6 +527,7 @@ test("reports Codex launch failure with a stable code", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: join(fixture.rootPath, "missing-codex"),
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -478,6 +557,7 @@ test("maps provider authentication failure to a stable provider error", async ()
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -514,6 +594,7 @@ test("captures non-zero Codex failures", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -550,6 +631,7 @@ test("maps unexpected provider termination to a stable provider error", async ()
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
     });
 
     await runWithFixture(fixture, async () => {
@@ -597,6 +679,7 @@ test("terminates Codex when the execution timeout expires", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
       timeoutMs: 150,
       killGraceMs: 100,
     });
@@ -635,6 +718,7 @@ test("bounds captured provider diagnostics", async () => {
     const executor = new CodexCliAgentExecutor({
       executablePath: fixture.codexPath,
       allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+      homeRoot: fixture.homeRoot,
       maxOutputBytes,
     });
 

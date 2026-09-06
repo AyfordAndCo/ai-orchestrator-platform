@@ -11,7 +11,10 @@ import {
   type WorkspaceValidator,
 } from "../../../domain/src/validation/index.js";
 import type { Workspace } from "../../../domain/src/workspace/index.js";
-import type { ValidationContainerOptions } from "./pnpm-workspace-validator.js";
+import {
+  resolveExecutableCandidate,
+  type ValidationContainerOptions,
+} from "./pnpm-workspace-validator.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -53,6 +56,17 @@ function resolveDefaultGitExecutablePath(): string {
         "gitExecutablePath explicitly.",
     );
   }
+  // `where`/`which` can print a *relative* match when PATH itself contains a
+  // relative entry (e.g. "." or "bin") - relative to the directory this
+  // process was launched from, which is still safe at this exact point (no
+  // workspace-specific cwd has been entered yet). But the result is cached
+  // and reused later by readHead() with `cwd` set to the agent-controlled
+  // workspace being validated, so a relative path would then resolve
+  // against the *wrong* directory - one an agent controls. Resolving it to
+  // absolute now, against the lookup-time cwd, closes that gap - the same
+  // fix PnpmWorkspaceValidator's identical helper applies, reused directly
+  // here rather than duplicated.
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
   cachedDefaultGitExecutablePath = resolved;
   return resolved;
 }

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type {
   AgentExecutionRequest,
@@ -34,6 +35,12 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 export interface CodexCliAgentExecutorOptions {
   readonly executablePath: string;
   readonly allowedWorkspaceRoot: string;
+  /**
+   * Absolute path to an empty, writable directory this class fully owns for
+   * staging isolated per-execution HOME directories (see createCodexEnvironment
+   * below). Never the operator's real home or anywhere it can reach.
+   */
+  readonly homeRoot: string;
   readonly timeoutMs?: number;
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
@@ -75,9 +82,28 @@ function requireEnvironmentValue(
   return value;
 }
 
-function createCodexEnvironment(): NodeJS.ProcessEnv {
-  const home = requireEnvironmentValue("HOME", process.env.HOME);
-
+/**
+ * Codex runs with `workspace-write` sandboxing, which restricts *writes* to
+ * the workspace but - like other sandboxed coding agents - still allows
+ * reads across the rest of the filesystem. Passing through the operator's
+ * real HOME would let it read `~/.ssh` private keys or `~/.config/gh/hosts.yml`
+ * directly, the same write-capable credentials used later for the push and
+ * PR publication, and misuse them over its network access. `homeDirectory`
+ * is instead a fresh, empty directory this run's caller creates and never
+ * touches otherwise (see CodexCliAgentExecutor#execute) - so there is
+ * nothing sensitive there to read.
+ *
+ * On Windows this needs more than just HOME: libuv's spawn auto-fills any
+ * of HOMEDRIVE/HOMEPATH/USERPROFILE/etc. that are *absent* from the given
+ * env block with the real logged-in user's session values, regardless of
+ * what else is passed - so leaving them out would silently hand the agent
+ * the operator's real profile directory back through USERPROFILE even with
+ * HOME isolated. Setting all three explicitly is what prevents that
+ * auto-fill; other Windows session variables (USERNAME, TEMP, ...) aren't
+ * home-directory paths and don't expose credential files, so they're left
+ * as-is.
+ */
+function createCodexEnvironment(homeDirectory: string): NodeJS.ProcessEnv {
   const path = requireEnvironmentValue("PATH", process.env.PATH);
 
   const user = requireEnvironmentValue(
@@ -90,7 +116,7 @@ function createCodexEnvironment(): NodeJS.ProcessEnv {
     : user;
 
   const environment: NodeJS.ProcessEnv = {
-    HOME: home,
+    HOME: homeDirectory,
     PATH: path,
     USER: user,
     LOGNAME: logname,
@@ -110,6 +136,13 @@ function createCodexEnvironment(): NodeJS.ProcessEnv {
     }
     if (process.env.WINDIR?.trim().length) {
       environment.WINDIR = process.env.WINDIR;
+    }
+
+    environment.USERPROFILE = homeDirectory;
+    const driveMatch = /^([a-zA-Z]:)(.*)$/.exec(homeDirectory);
+    if (driveMatch?.[1] !== undefined) {
+      environment.HOMEDRIVE = driveMatch[1];
+      environment.HOMEPATH = driveMatch[2]?.length ? driveMatch[2] : "\\";
     }
   }
 
@@ -194,7 +227,11 @@ async function requireSafeWorkspace(
   return realWorkspacePath;
 }
 
-function createCodexProcess(executablePath: string, workspacePath: string) {
+function createCodexProcess(
+  executablePath: string,
+  workspacePath: string,
+  homeDirectory: string,
+) {
   const command = /\.(?:mjs|cjs|js)$/i.test(executablePath)
     ? process.execPath
     : executablePath;
@@ -207,7 +244,7 @@ function createCodexProcess(executablePath: string, workspacePath: string) {
     shell:
       process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executablePath),
     detached: process.platform !== "win32",
-    env: createCodexEnvironment(),
+    env: createCodexEnvironment(homeDirectory),
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
@@ -242,6 +279,7 @@ function terminateCodexProcess(
 export class CodexCliAgentExecutor implements AgentExecutor {
   readonly #executablePath: string;
   readonly #allowedWorkspaceRoot: string;
+  readonly #homeRoot: string;
   readonly #timeoutMs: number;
   readonly #killGraceMs: number;
   readonly #maxOutputBytes: number;
@@ -259,9 +297,15 @@ export class CodexCliAgentExecutor implements AgentExecutor {
       throw new RangeError("allowedWorkspaceRoot must not be empty");
     }
 
+    if (!isAbsolute(options.homeRoot)) {
+      throw new RangeError("homeRoot must be an absolute path");
+    }
+
     this.#executablePath = options.executablePath;
 
     this.#allowedWorkspaceRoot = resolve(options.allowedWorkspaceRoot);
+
+    this.#homeRoot = resolve(options.homeRoot);
 
     this.#timeoutMs = requirePositiveInteger(
       "timeoutMs",
@@ -285,18 +329,45 @@ export class CodexCliAgentExecutor implements AgentExecutor {
       this.#allowedWorkspaceRoot,
     );
 
-    return await this.runCodex(workspacePath, request.instruction);
+    const homeDirectory = join(this.#homeRoot, `home-${randomUUID()}`);
+    try {
+      await mkdir(homeDirectory, { recursive: true });
+    } catch (error) {
+      throw new AgentProviderExecutionError(
+        agentProviderErrorCodes.AGENT_PROVIDER_LAUNCH_FAILED,
+        "Unable to create the isolated Codex home directory",
+        {},
+        { cause: error },
+      );
+    }
+
+    try {
+      return await this.runCodex(
+        workspacePath,
+        request.instruction,
+        homeDirectory,
+      );
+    } finally {
+      await rm(homeDirectory, { recursive: true, force: true }).catch(() => {
+        // Best-effort cleanup - never mask the real execution result/error.
+      });
+    }
   }
 
   private runCodex(
     workspacePath: string,
     instruction: string,
+    homeDirectory: string,
   ): Promise<AgentExecutionResult> {
     return new Promise((resolveExecution, rejectExecution) => {
       let child: CodexProcess;
 
       try {
-        child = createCodexProcess(this.#executablePath, workspacePath);
+        child = createCodexProcess(
+          this.#executablePath,
+          workspacePath,
+          homeDirectory,
+        );
       } catch (error) {
         rejectExecution(
           new AgentProviderExecutionError(

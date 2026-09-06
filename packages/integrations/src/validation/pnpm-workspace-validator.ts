@@ -1,6 +1,7 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 import {
@@ -16,6 +17,24 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const execFileAsync = promisify(execFile);
+
+/**
+ * `where`/`which` can print a *relative* match when PATH itself contains a
+ * relative entry (e.g. "." or "bin") - relative to the directory the finder
+ * process was launched from. That's still safe to resolve at lookup time
+ * (no workspace-specific cwd has been entered yet), but the result is
+ * cached and reused later with `cwd` set to the agent-controlled workspace
+ * being validated - so a relative path would then resolve against the
+ * *wrong*, agent-controlled directory instead. Exported for direct testing,
+ * since real `where`/`which` output can't be forced to be relative from a
+ * test without mutating the process's real PATH.
+ */
+export function resolveExecutableCandidate(
+  candidate: string,
+  lookupCwd: string,
+): string {
+  return isAbsolute(candidate) ? candidate : resolve(lookupCwd, candidate);
+}
 
 let cachedDefaultGitExecutablePath: string | undefined;
 
@@ -53,7 +72,51 @@ function resolveDefaultGitExecutablePath(): string {
         "gitExecutablePath explicitly.",
     );
   }
+  // `where`/`which` can print a *relative* match when PATH itself contains a
+  // relative entry (e.g. "." or "bin") - relative to the directory this
+  // process was launched from, which is still safe at this exact point (no
+  // workspace-specific cwd has been entered yet). But the result is cached
+  // and reused later by readHead() with `cwd` set to the agent-controlled
+  // workspace being validated, so a relative path would then resolve
+  // against the *wrong* directory - one an agent controls. Resolving it to
+  // absolute now, against the lookup-time cwd, closes that gap.
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
   cachedDefaultGitExecutablePath = resolved;
+  return resolved;
+}
+
+let cachedDefaultPnpmExecutablePath: string | undefined;
+
+/**
+ * Resolves an absolute pnpm executable via PATH once, then caches it. The
+ * unsandboxed Windows fallback below launches "pnpm validate" through
+ * cmd.exe (shell: true) because pnpm is normally a .cmd shim; cmd.exe's own
+ * command search checks the current directory - here, the agent-controlled
+ * workspace being validated - before PATH, so an agent-planted pnpm.cmd
+ * would otherwise run with this process's host privileges instead of the
+ * real pnpm. Resolving to an absolute path up front and invoking that
+ * directly bypasses the search entirely, the same fix applied to git
+ * above.
+ */
+function resolveDefaultPnpmExecutablePath(): string {
+  if (cachedDefaultPnpmExecutablePath !== undefined) {
+    return cachedDefaultPnpmExecutablePath;
+  }
+  const finder = process.platform === "win32" ? "where" : "which";
+  let resolved: string | undefined;
+  try {
+    const stdout = execFileSync(finder, ["pnpm"], { encoding: "utf8" });
+    resolved = stdout.split(/\r?\n/)[0]?.trim();
+  } catch (error) {
+    throw new Error("Unable to resolve an absolute pnpm executable on PATH.", {
+      cause: error,
+    });
+  }
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error("Unable to resolve an absolute pnpm executable on PATH.");
+  }
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
+  cachedDefaultPnpmExecutablePath = resolved;
   return resolved;
 }
 
@@ -246,19 +309,28 @@ function createValidationProcess(
 
     // pnpm is normally a .cmd shim on Windows, and Windows's CreateProcess
     // (unlike a shell) won't resolve a bare command through PATHEXT to find
-    // it when shell is false - it only tries appending .exe. shell is safe
-    // here specifically because the whole command line is a fixed literal,
-    // never interpolated from anything untrusted; passing it as one string
-    // (rather than a command plus an args array) is also what avoids
-    // Node's shell-plus-args deprecation warning (DEP0190).
+    // it when shell is false - it only tries appending .exe - so this uses
+    // shell: true to get PATHEXT resolution. That alone isn't enough,
+    // though: cmd.exe's own command search checks the current directory
+    // (workspacePath, agent-controlled) before PATH, so a literal "pnpm"
+    // would let an agent-planted pnpm.cmd run instead of the real one with
+    // this process's host privileges. Resolving pnpm to an absolute path
+    // first and passing shell that directly closes that gap - the command
+    // line is still a fixed literal with nothing untrusted interpolated
+    // into it, and passing it as one string (rather than a command plus an
+    // args array) is what avoids Node's shell-plus-args deprecation warning
+    // (DEP0190).
     return process.platform === "win32"
-      ? spawnImplementation("pnpm validate", {
-          cwd: workspacePath,
-          shell: true,
-          env: validationEnvironment(environment),
-          detached: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        })
+      ? spawnImplementation(
+          `"${resolveDefaultPnpmExecutablePath()}" validate`,
+          {
+            cwd: workspacePath,
+            shell: true,
+            env: validationEnvironment(environment),
+            detached: false,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        )
       : spawnImplementation("pnpm", ["validate"], {
           cwd: workspacePath,
           shell: false,

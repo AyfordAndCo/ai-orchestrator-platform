@@ -17,6 +17,19 @@ granting an agent unrestricted host access, so there is no host-execution
 escape hatch here: if you don't yet have a pinned validation image, publish
 one before running this.
 
+Codex itself runs with `workspace-write` sandboxing, which restricts *writes*
+to its workspace but - like other sandboxed coding agents - still allows
+reads across the rest of the filesystem. `CodexCliAgentExecutor` never passes
+Codex the operator's real `HOME`: it creates a fresh, empty directory under
+`--workspace-root` for each run and points `HOME` (and, on Windows,
+`USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`, which Windows would otherwise silently
+repopulate with the real profile's values even when `HOME` alone is
+isolated) at that instead, so Codex can't read `~/.ssh` private keys or
+`~/.config/gh/hosts.yml` - the same write-capable credentials used later for
+the push and PR publication - and misuse them over its network access.
+
+
+
 ## Prerequisites
 
 - A local clone of the target repository, on `main`, with a clean working
@@ -162,7 +175,7 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
 | `--repo`                                                      | yes         |                                         | `owner/name`; verified against `--repository-path`'s actual fetch **and** push origin URLs before anything runs     |
 | `--repository-path`                                           | yes         |                                         | local clone, must be clean and on `main`                                                                            |
 | `--issue`                                                     | yes         |                                         | GitHub issue number to implement                                                                                    |
-| `--workspace-root`                                            | yes         |                                         | absolute; the isolated worktree is created under here                                                               |
+| `--workspace-root`                                            | yes         |                                         | absolute; the isolated worktree, Codex's isolated `HOME` (`codex-home/`), and the clean-clone push staging directory (`publish/`) are all created under here |
 | `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                             |
 | `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                        |
 | `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | validated against this repo's `<developer>/<issue-key>-<short-description>` convention and must reference `--issue` |

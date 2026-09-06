@@ -394,6 +394,16 @@ test("redactUrl strips embedded userinfo from an HTTPS origin", () => {
   );
 });
 
+test("redactUrl strips userinfo embedded mid-string, not just at the start", () => {
+  // A URL-scoped git config key (e.g. credential.<url>.helper) embeds the
+  // URL - and any credential in it - after a section prefix, not at
+  // position 0, unlike the bare origin URLs the other redactUrl tests pass.
+  assert.equal(
+    redactUrl("credential.https://user:ghp_secrettoken@github.com.helper"),
+    "credential.https://github.com.helper",
+  );
+});
+
 test("redactUrl leaves URLs without embedded credentials unchanged", () => {
   assert.equal(
     redactUrl("https://github.com/AyfordAndCo/example.git"),
@@ -679,6 +689,30 @@ test("readAllRemoteUrls includes a separately configured pushurl for a non-origi
   }
 });
 
+test("readAllRemoteUrls correctly parses a remote subsection name containing a space", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-all-remotes-"));
+  try {
+    await git(root, "init", "-b", "main");
+    // `git config` (unlike `git remote add`) accepts a subsection name with
+    // a literal space when written directly - splitting the default
+    // "<key> <value>" output at the first space then finds the space
+    // *inside* the key ("foo bar") rather than the one separating it from
+    // the value, mis-slicing the value to "bar.url https://..." (no longer
+    // recognizable as a URL) instead of the real URL.
+    await git(
+      root,
+      "config",
+      "--local",
+      "remote.foo bar.url",
+      "https://user:token@github.com/o/r.git",
+    );
+    const urls = await readAllRemoteUrls("git", root);
+    assert.deepEqual(urls, ["https://user:token@github.com/o/r.git"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("assertNoCustomGitHooks passes when core.hooksPath is unset (the default)", async () => {
   const root = await mkdtemp(join(tmpdir(), "cli-hooks-"));
   try {
@@ -939,6 +973,29 @@ test("assertNoExecutableGitConfig refuses to run when a URL-scoped credential.<u
   }
 });
 
+test("assertNoExecutableGitConfig strips userinfo from a URL-scoped credential.<url>.helper key before reporting it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
+  try {
+    await git(root, "init", "-b", "main");
+    // The key itself - not just the value - embeds whatever URL the
+    // operator configured it against, credentials included.
+    await git(
+      root,
+      "config",
+      "--local",
+      "credential.https://user:ghp_secrettoken@github.com.helper",
+      "!./tracked-helper.sh",
+    );
+    await assert.rejects(assertNoExecutableGitConfig("git", root), (error) => {
+      assert.ok(!error.message.includes("ghp_secrettoken"));
+      assert.match(error.message, /credential\.https:\/\/github\.com\.helper/);
+      return true;
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("assertNoExecutableGitConfig passes when credential.helper is explicitly cleared (empty value)", async () => {
   const root = await mkdtemp(join(tmpdir(), "cli-exec-config-"));
   try {
@@ -999,6 +1056,27 @@ test("assertNoPersistedAuthConfig refuses to run when a URL-scoped http.<url>.ex
       assertNoPersistedAuthConfig("git", root),
       /http\.https:\/\/github\.com\.extraHeader/i,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoPersistedAuthConfig strips userinfo from a URL-scoped http.<url>.extraHeader key before reporting it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-authconfig-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(
+      root,
+      "config",
+      "--local",
+      "http.https://user:ghp_secrettoken@github.com.extraHeader",
+      "Authorization: Bearer secret-token",
+    );
+    await assert.rejects(assertNoPersistedAuthConfig("git", root), (error) => {
+      assert.ok(!error.message.includes("ghp_secrettoken"));
+      assert.match(error.message, /http\.https:\/\/github\.com\.extraHeader/i);
+      return true;
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

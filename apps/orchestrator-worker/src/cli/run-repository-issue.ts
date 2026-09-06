@@ -354,6 +354,59 @@ export async function readPushUrls(
 }
 
 /**
+ * Parses `git config --get-regexp --null` output into {key, value} pairs.
+ * The default (non-null) output separates a key from its value with a
+ * single space and entries with a newline - which misparses as soon as a
+ * key itself contains a space, e.g. a manually configured remote subsection
+ * with a space in its name (`remote."foo bar".url`), or a URL-scoped
+ * subsection (`credential.<url>.helper`, `http.<url>.extraHeader`) whose
+ * <url> was itself configured with a literal space. Splitting on the first
+ * space then finds the wrong boundary and can return a mangled value that
+ * silently fails a downstream check (e.g. no longer looks like a URL, so
+ * assertNoEmbeddedCredentials never sees it). --null instead ends each
+ * entry with a NUL and separates its key from its value with exactly one
+ * newline, which git itself can't misinterpret regardless of what either
+ * one contains.
+ */
+async function readConfigEntries(
+  gitPath: string,
+  repositoryPath: string,
+  pattern: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<ReadonlyArray<{ readonly key: string; readonly value: string }>> {
+  try {
+    const { stdout } = await execFileAsync(
+      gitPath,
+      [
+        "-C",
+        repositoryPath,
+        "config",
+        "--local",
+        "--get-regexp",
+        "--null",
+        pattern,
+      ],
+      env === undefined ? {} : { env },
+    );
+    return stdout
+      .split("\0")
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const newlineIndex = entry.indexOf("\n");
+        return newlineIndex === -1
+          ? { key: entry, value: "" }
+          : {
+              key: entry.slice(0, newlineIndex),
+              value: entry.slice(newlineIndex + 1),
+            };
+      });
+  } catch {
+    // `git config --get-regexp` exits non-zero when nothing matches.
+    return [];
+  }
+}
+
+/**
  * Every `remote.<name>.url`/`remote.<name>.pushurl` in local config, for
  * every remote - not just "origin". Codex's workspace shares this same
  * local `.git/config`, so it can read any configured remote's URL via
@@ -365,32 +418,15 @@ export async function readAllRemoteUrls(
   gitPath: string,
   repositoryPath: string,
 ): Promise<readonly string[]> {
-  try {
-    const { stdout } = await execFileAsync(
-      gitPath,
-      [
-        "-C",
-        repositoryPath,
-        "config",
-        "--local",
-        "--get-regexp",
-        "^remote\\..*\\.(push)?url$",
-      ],
-      { env: GIT_CONFIG_ISOLATION_ENV },
-    );
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const spaceIndex = line.indexOf(" ");
-        return spaceIndex === -1 ? "" : line.slice(spaceIndex + 1).trim();
-      })
-      .filter((url) => url.length > 0);
-  } catch {
-    // `git config --get-regexp` exits non-zero when nothing matches.
-    return [];
-  }
+  const entries = await readConfigEntries(
+    gitPath,
+    repositoryPath,
+    "^remote\\..*\\.(push)?url$",
+    GIT_CONFIG_ISOLATION_ENV,
+  );
+  return entries
+    .map((entry) => entry.value.trim())
+    .filter((url) => url.length > 0);
 }
 
 /**
@@ -694,39 +730,22 @@ const GIT_CONFIG_BOOLEAN_PATTERN = /^(?:true|false|1|0|yes|no|on|off)$/i;
  * value - naming an actual helper/header - counts as active. Only the key
  * is returned, never the value: a value here can be an arbitrary
  * operator-supplied string that could embed a secret, and callers use this
- * to build error messages that are printed as-is.
+ * to build error messages that are printed as-is. The key itself isn't
+ * automatically safe to print, though: a URL-scoped subsection - as in
+ * `credential.<url>.helper` or `http.<url>.extraHeader` - embeds whatever
+ * URL the operator configured it against, userinfo credentials included, so
+ * the key is run through the same userinfo redaction as any other URL
+ * before being returned.
  */
 async function readActiveConfigKeys(
   gitPath: string,
   repositoryPath: string,
   pattern: string,
 ): Promise<readonly string[]> {
-  try {
-    const { stdout } = await execFileAsync(gitPath, [
-      "-C",
-      repositoryPath,
-      "config",
-      "--local",
-      "--get-regexp",
-      pattern,
-    ]);
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .filter((line) => {
-        const spaceIndex = line.indexOf(" ");
-        const value = spaceIndex === -1 ? "" : line.slice(spaceIndex + 1);
-        return value.trim().length > 0;
-      })
-      .map((line) => {
-        const spaceIndex = line.indexOf(" ");
-        return spaceIndex === -1 ? line : line.slice(0, spaceIndex);
-      });
-  } catch {
-    // `git config --get-regexp` exits non-zero when nothing matches.
-    return [];
-  }
+  const entries = await readConfigEntries(gitPath, repositoryPath, pattern);
+  return entries
+    .filter((entry) => entry.value.trim().length > 0)
+    .map((entry) => redactUrl(entry.key));
 }
 
 /**
@@ -828,9 +847,16 @@ export async function assertNoPersistedAuthConfig(
   }
 }
 
-/** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
+/**
+ * Strips embedded userinfo (e.g. an inline PAT) before a URL is logged.
+ * Deliberately not anchored to the string's start and matches every
+ * occurrence: some callers pass a bare URL (userinfo at position 0), others
+ * pass a git config key with a URL-scoped subsection embedded mid-string
+ * (e.g. `credential.https://user:token@host/.helper`), where the same
+ * credential-bearing pattern can appear anywhere.
+ */
 export function redactUrl(url: string): string {
-  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
+  return url.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/gi, "$1");
 }
 
 /**
@@ -1144,6 +1170,11 @@ async function main(): Promise<void> {
       agentExecution: {
         executablePath: options.codexPath,
         allowedWorkspaceRoot: options.workspaceRoot,
+        // A sibling of the agent's own run-<id> workspace, isolated from
+        // the operator's real home so Codex can't read ~/.ssh or
+        // ~/.config/gh/hosts.yml (see CodexCliAgentExecutor's own doc
+        // comment on createCodexEnvironment).
+        homeRoot: `${options.workspaceRoot}/codex-home`,
         timeoutMs: options.agentTimeoutMs,
       },
       validation: {
