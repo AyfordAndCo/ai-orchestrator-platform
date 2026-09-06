@@ -23,6 +23,7 @@ import {
   omitUntrustedProcessOutput,
   parseArgs,
   parseGitHubOwnerRepo,
+  readAllRemoteUrls,
   readOptions,
   readOriginUrl,
   readPushUrls,
@@ -249,6 +250,30 @@ test("readOptions rejects a timeout flag passed with no value instead of silentl
   // silently, turning a missing value into a 1ms timeout.
   const argv = [...baseArgs(), "--ci-timeout-ms"];
   return assert.rejects(readOptions(argv), /--ci-timeout-ms requires a value/);
+});
+
+test("readOptions rejects an optional flag passed with no value instead of silently treating it as absent", async () => {
+  // Before readStringFlag treated a present-but-valueless flag as an
+  // error for every caller, a valueless --docker-path would silently
+  // fall through to auto-resolving "docker" from PATH instead of
+  // reporting the operator's likely mistake; --required-actor and
+  // --feature-branch would silently select their defaults the same way.
+  await assert.rejects(
+    readOptions([...baseArgs(), "--docker-path"]),
+    /--docker-path requires a value/,
+  );
+  await assert.rejects(
+    readOptions([...baseArgs(), "--required-actor"]),
+    /--required-actor requires a value/,
+  );
+  await assert.rejects(
+    readOptions([...baseArgs(), "--feature-branch"]),
+    /--feature-branch requires a value/,
+  );
+  await assert.rejects(
+    readOptions([...baseArgs(), "--bun-image"]),
+    /--bun-image requires a value/,
+  );
 });
 
 test("readOptions rejects a non-integer or non-positive --validation-timeout-ms", async () => {
@@ -609,6 +634,46 @@ test("readPushUrls returns every configured push URL, not just the first", async
       "https://github.com/o/r.git",
       "https://github.com/someone-else/other.git",
     ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readAllRemoteUrls returns URLs for every configured remote, not just origin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-all-remotes-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "origin", "https://github.com/o/r.git");
+    await git(
+      root,
+      "remote",
+      "add",
+      "upstream",
+      "https://user:token@github.com/upstream/r.git",
+    );
+    const urls = await readAllRemoteUrls("git", root);
+    assert.ok(urls.includes("https://github.com/o/r.git"));
+    assert.ok(urls.includes("https://user:token@github.com/upstream/r.git"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readAllRemoteUrls includes a separately configured pushurl for a non-origin remote", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-all-remotes-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "remote", "add", "upstream", "https://github.com/o/r.git");
+    await git(
+      root,
+      "remote",
+      "set-url",
+      "--push",
+      "upstream",
+      "https://user:token@github.com/o/other-push.git",
+    );
+    const urls = await readAllRemoteUrls("git", root);
+    assert.ok(urls.includes("https://user:token@github.com/o/other-push.git"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

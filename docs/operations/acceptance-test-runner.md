@@ -89,12 +89,13 @@ one before running this.
   proceed if they diverge — which is what an active `url.*.insteadOf`
   rewrite would cause — rather than silently trusting either resolution on
   its own.
-- The target repository's origin (and any separately configured push URL)
-  must not have credentials embedded in an HTTP(S) URL. This runner fails
-  closed on that rather than only redacting it from logs: Codex's own
-  workspace shares this clone's `.git/config` and has network access, so an
-  embedded credential could be read via `git remote get-url origin` and
-  misused before the intended push ever happens (see
+- **Every** configured remote (origin, its push URL(s), and any other
+  remote such as `upstream`) must not have credentials embedded in an
+  HTTP(S) URL. This runner fails closed on that rather than only redacting
+  it from logs: Codex's own workspace shares this clone's `.git/config` and
+  has network access, so an embedded credential in _any_ remote (not just
+  the one this runner itself uses) could be read via `git remote get-url
+<name>` and misused (see
   [#33](https://github.com/AyfordAndCo/ai-orchestrator-platform/issues/33)).
   An SSH origin's `git@` userinfo is exempt — it's the fixed, non-secret SSH
   login convention, not a credential.

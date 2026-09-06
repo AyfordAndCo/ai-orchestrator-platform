@@ -61,16 +61,26 @@ const GIT_CONFIG_ISOLATION_ENV = {
  * `parseArgs` sets a flag to boolean `true` when it's passed with no value
  * (e.g. as the last argument, or immediately followed by another `--flag`).
  * A plain `as string | undefined` cast at the call site doesn't change that
- * at runtime, so callers that skip this and pass the raw value straight to
- * `Number()` or `.trim()` get silently-wrong results (`Number(true) === 1`)
- * or an unhandled TypeError instead of a clear validation error.
+ * at runtime, so a caller that only narrows the type at compile time would
+ * get silently-wrong results (`Number(true) === 1`) or an unhandled
+ * TypeError instead of a clear validation error - and for an *optional*
+ * flag specifically, treating that boolean as "absent" would silently fall
+ * back to a default (e.g. --docker-path with no value quietly resolving
+ * whatever "docker" happens to be on PATH) rather than reporting the
+ * operator's likely mistake. So this only ever returns undefined for a key
+ * that's genuinely missing; a present-but-valueless flag is always an
+ * error, for every caller, required or optional.
  */
 function readStringFlag(
   args: Record<string, string | boolean>,
   name: string,
 ): string | undefined {
   const value = args[name];
-  return typeof value === "string" ? value : undefined;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new RangeError(`--${name} requires a value`);
+  }
+  return value;
 }
 
 function parsePositiveIntegerArg(
@@ -79,12 +89,7 @@ function parsePositiveIntegerArg(
   defaultValue: number,
 ): number {
   const text = readStringFlag(args, name);
-  if (text === undefined) {
-    if (args[name] !== undefined) {
-      throw new RangeError(`--${name} requires a value`);
-    }
-    return defaultValue;
-  }
+  if (text === undefined) return defaultValue;
   const value = Number(text);
   if (!Number.isInteger(value) || value <= 0) {
     throw new RangeError(`--${name} must be a positive integer`);
@@ -346,6 +351,46 @@ export async function readPushUrls(
     .split(/\r?\n/)
     .map((url) => url.trim())
     .filter((url) => url.length > 0);
+}
+
+/**
+ * Every `remote.<name>.url`/`remote.<name>.pushurl` in local config, for
+ * every remote - not just "origin". Codex's workspace shares this same
+ * local `.git/config`, so it can read any configured remote's URL via
+ * `git remote get-url <name>` regardless of which remote this CLI itself
+ * uses, and a credential embedded in a secondary remote (e.g. "upstream")
+ * would otherwise go unchecked even though origin's own URL is verified.
+ */
+export async function readAllRemoteUrls(
+  gitPath: string,
+  repositoryPath: string,
+): Promise<readonly string[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      gitPath,
+      [
+        "-C",
+        repositoryPath,
+        "config",
+        "--local",
+        "--get-regexp",
+        "^remote\\..*\\.(push)?url$",
+      ],
+      { env: GIT_CONFIG_ISOLATION_ENV },
+    );
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const spaceIndex = line.indexOf(" ");
+        return spaceIndex === -1 ? "" : line.slice(spaceIndex + 1).trim();
+      })
+      .filter((url) => url.length > 0);
+  } catch {
+    // `git config --get-regexp` exits non-zero when nothing matches.
+    return [];
+  }
 }
 
 /**
@@ -1062,6 +1107,15 @@ async function main(): Promise<void> {
       assertOriginMatchesRepo(pushUrl, options.repo);
     }
     assertNoEmbeddedCredentials(pushUrl);
+  }
+  // Beyond origin specifically: any other configured remote (e.g.
+  // "upstream") is just as readable from Codex's shared .git/config.
+  const allRemoteUrls = await readAllRemoteUrls(
+    options.gitPath,
+    options.repositoryPath,
+  );
+  for (const url of allRemoteUrls) {
+    assertNoEmbeddedCredentials(url);
   }
 
   const runId = randomUUID();
