@@ -35,6 +35,21 @@ import { executeRepositoryRun } from "../run/execute-repository-run.js";
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_CI_TIMEOUT_MS = 20 * 60 * 1000;
+const DEFAULT_VALIDATION_TIMEOUT_MS = 10 * 60 * 1000;
+
+function parsePositiveIntegerArg(
+  args: Record<string, string | boolean>,
+  name: string,
+  defaultValue: number,
+): number {
+  const text = args[name] as string | undefined;
+  if (text === undefined) return defaultValue;
+  const value = Number(text);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new RangeError(`--${name} must be a positive integer`);
+  }
+  return value;
+}
 
 export interface CliOptions {
   readonly repo: string;
@@ -46,9 +61,12 @@ export interface CliOptions {
   readonly ghPath: string;
   readonly dockerPath: string;
   readonly containerImage: string;
+  readonly bunImage?: string;
+  readonly dotnetImage?: string;
   readonly requiredActor: string;
   readonly featureBranch: string;
   readonly ciTimeoutMs: number;
+  readonly validationTimeoutMs: number;
 }
 
 export function requireArg(name: string, value: string | undefined): string {
@@ -145,14 +163,18 @@ export async function readOptions(
         "--container-image instead.",
     );
   }
-  const ciTimeoutText = args["ci-timeout-ms"] as string | undefined;
-  let ciTimeoutMs = DEFAULT_CI_TIMEOUT_MS;
-  if (ciTimeoutText !== undefined) {
-    ciTimeoutMs = Number(ciTimeoutText);
-    if (!Number.isInteger(ciTimeoutMs) || ciTimeoutMs <= 0) {
-      throw new RangeError("--ci-timeout-ms must be a positive integer");
-    }
-  }
+  const ciTimeoutMs = parsePositiveIntegerArg(
+    args,
+    "ci-timeout-ms",
+    DEFAULT_CI_TIMEOUT_MS,
+  );
+  const validationTimeoutMs = parsePositiveIntegerArg(
+    args,
+    "validation-timeout-ms",
+    DEFAULT_VALIDATION_TIMEOUT_MS,
+  );
+  const bunImage = args["bun-image"] as string | undefined;
+  const dotnetImage = args["dotnet-image"] as string | undefined;
 
   return {
     repo,
@@ -176,11 +198,14 @@ export async function readOptions(
       args["docker-path"] as string | undefined,
     ),
     containerImage,
+    ...(bunImage === undefined ? {} : { bunImage }),
+    ...(dotnetImage === undefined ? {} : { dotnetImage }),
     requiredActor:
       (args["required-actor"] as string | undefined) ?? "allanayford-dev",
     featureBranch:
       (args["feature-branch"] as string | undefined) ?? `agent/issue-${issue}`,
     ciTimeoutMs,
+    validationTimeoutMs,
   };
 }
 
@@ -278,6 +303,12 @@ export function buildInstruction(issue: number, summary: IssueSummary): string {
     summary.body,
     "",
     "Make only the change described above. Do not perform unrelated refactors.",
+    "",
+    "Before finishing, ensure the repository's declared dependencies are " +
+      "installed (for example: run the project's package manager install " +
+      "command) so the canonical validation command can run without a " +
+      "network connection. Validation runs afterward in a container with " +
+      "no network access, so any missing dependency must be installed now.",
   ].join("\n");
 }
 
@@ -330,6 +361,19 @@ async function main(): Promise<void> {
           executablePath: options.dockerPath,
           image: options.containerImage,
         },
+        timeoutMs: options.validationTimeoutMs,
+        ...(options.bunImage === undefined && options.dotnetImage === undefined
+          ? {}
+          : {
+              runtimeImages: {
+                ...(options.bunImage === undefined
+                  ? {}
+                  : { bun: options.bunImage }),
+                ...(options.dotnetImage === undefined
+                  ? {}
+                  : { dotnet: options.dotnetImage }),
+              },
+            }),
       },
       gitPublication: {
         gitExecutablePath: options.gitPath,

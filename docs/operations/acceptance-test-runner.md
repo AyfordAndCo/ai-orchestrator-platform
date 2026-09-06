@@ -30,6 +30,18 @@ one before running this.
 - Codex CLI, `git`, `gh`, and a Docker (or compatible) executable on `PATH`
   (or pass their absolute paths explicitly), plus a `sha256`-pinned
   validation container image.
+- The validation container has no network access. `RepositoryCommandValidator`
+  does not install dependencies, so the instruction sent to the agent asks it
+  to install the repository's dependencies itself before finishing (Codex's
+  own execution sandbox does allow network access, unlike the validation
+  container) — a target repository whose canonical validation needs installed
+  dependencies (most Node repositories) will fail validation if the agent
+  skips this.
+- A bun or dotnet target additionally needs `--bun-image` / `--dotnet-image`
+  (each `sha256`-pinned) — `RepositoryCommandValidator` fails closed on those
+  runtimes without a dedicated image, rather than running them in the default
+  npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
+  actually supported by this runner today.
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.
@@ -53,17 +65,19 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
   --container-image "docker.io/ayfordandco/ai-orchestrator-platform-validation@sha256:<digest>"
 ```
 
-| Flag                                                          | Required | Default              | Notes                                                                       |
-| ------------------------------------------------------------- | -------- | -------------------- | --------------------------------------------------------------------------- |
-| `--repo`                                                      | yes      |                      | `owner/name`                                                                |
-| `--repository-path`                                           | yes      |                      | local clone, must be clean and on `main`                                    |
-| `--issue`                                                     | yes      |                      | GitHub issue number to implement                                            |
-| `--workspace-root`                                            | yes      |                      | absolute; the isolated worktree is created under here                       |
-| `--container-image`                                           | yes      |                      | must be `sha256`-pinned                                                     |
-| `--feature-branch`                                            | no       | `agent/issue-<n>`    |                                                                             |
-| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no       | resolved from `PATH` | must be absolute if passed                                                  |
-| `--required-actor`                                            | no       | `allanayford-dev`    | the `gh` identity that must own the published PR                            |
-| `--ci-timeout-ms`                                             | no       | `1200000` (20 min)   | how long to wait for CI to reach a final state before treating it as failed |
+| Flag                                                          | Required    | Default              | Notes                                                                                   |
+| ------------------------------------------------------------- | ----------- | -------------------- | --------------------------------------------------------------------------------------- |
+| `--repo`                                                      | yes         |                      | `owner/name`; verified against `--repository-path`'s actual origin before anything runs |
+| `--repository-path`                                           | yes         |                      | local clone, must be clean and on `main`                                                |
+| `--issue`                                                     | yes         |                      | GitHub issue number to implement                                                        |
+| `--workspace-root`                                            | yes         |                      | absolute; the isolated worktree is created under here                                   |
+| `--container-image`                                           | yes         |                      | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                 |
+| `--bun-image` / `--dotnet-image`                              | conditional |                      | must be `sha256`-pinned; required for a bun or dotnet target                            |
+| `--feature-branch`                                            | no          | `agent/issue-<n>`    |                                                                                         |
+| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH` | must be absolute if passed                                                              |
+| `--required-actor`                                            | no          | `allanayford-dev`    | the `gh` identity that must own the published PR                                        |
+| `--ci-timeout-ms`                                             | no          | `1200000` (20 min)   | how long to wait for CI to reach a final state before treating it as failed             |
+| `--validation-timeout-ms`                                     | no          | `600000` (10 min)    | how long the canonical validation command may run before treating it as failed          |
 
 Passing `--base-branch` or `--allow-host-validation` is rejected outright
 with an explanatory error — neither is supported (see Prerequisites above).

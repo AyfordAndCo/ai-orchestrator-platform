@@ -154,29 +154,55 @@ test("readOptions rejects a non-integer or non-positive --ci-timeout-ms", async 
   );
 });
 
+test("readOptions rejects a non-integer or non-positive --validation-timeout-ms", async () => {
+  await assert.rejects(
+    readOptions(baseArgs({ "validation-timeout-ms": "soon" })),
+    /--validation-timeout-ms must be a positive integer/,
+  );
+  await assert.rejects(
+    readOptions(baseArgs({ "validation-timeout-ms": "0" })),
+    /--validation-timeout-ms must be a positive integer/,
+  );
+});
+
 test("readOptions applies documented defaults", async () => {
   const options = await readOptions(baseArgs());
   assert.equal(options.requiredActor, "allanayford-dev");
   assert.equal(options.featureBranch, "agent/issue-42");
   assert.equal(options.ciTimeoutMs, 20 * 60 * 1000);
+  assert.equal(options.validationTimeoutMs, 10 * 60 * 1000);
   assert.equal(options.dockerPath, "/abs/docker");
+  assert.equal(options.bunImage, undefined);
+  assert.equal(options.dotnetImage, undefined);
   assert.equal(
     options.containerImage,
     "docker.io/example/validation@sha256:" + "a".repeat(64),
   );
 });
 
-test("readOptions honors explicit --required-actor, --feature-branch, and --ci-timeout-ms overrides", async () => {
+test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeout-ms, --validation-timeout-ms, --bun-image, and --dotnet-image overrides", async () => {
   const options = await readOptions(
     baseArgs({
       "required-actor": "some-bot",
       "feature-branch": "agent/custom-branch",
       "ci-timeout-ms": "5000",
+      "validation-timeout-ms": "6000",
+      "bun-image": "docker.io/example/bun@sha256:" + "b".repeat(64),
+      "dotnet-image": "docker.io/example/dotnet@sha256:" + "c".repeat(64),
     }),
   );
   assert.equal(options.requiredActor, "some-bot");
   assert.equal(options.featureBranch, "agent/custom-branch");
   assert.equal(options.ciTimeoutMs, 5000);
+  assert.equal(options.validationTimeoutMs, 6000);
+  assert.equal(
+    options.bunImage,
+    "docker.io/example/bun@sha256:" + "b".repeat(64),
+  );
+  assert.equal(
+    options.dotnetImage,
+    "docker.io/example/dotnet@sha256:" + "c".repeat(64),
+  );
 });
 
 test("readOptions rejects --base-branch outright rather than silently ignoring or applying it", async () => {
@@ -201,6 +227,10 @@ test("buildInstruction includes the issue number, title, and body", () => {
   assert.match(instruction, /Implement GitHub issue #7: Fix the thing/);
   assert.match(instruction, /Do the specific fix\./);
   assert.match(instruction, /Do not perform unrelated refactors\./);
+  assert.match(
+    instruction,
+    /ensure the repository's declared dependencies are\s+installed/,
+  );
 });
 
 test("redactUrl strips embedded userinfo from an HTTPS origin", () => {
