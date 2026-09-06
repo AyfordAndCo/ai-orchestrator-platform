@@ -47,7 +47,9 @@ test("maps check runs into provider-neutral CI states", async () => {
     calls.some((args) => args.some((arg) => String(arg).includes("/pulls/7"))),
   );
   assert.ok(
-    calls.some((args) => args.some((arg) => String(arg).includes("/checks"))),
+    calls.some((args) =>
+      args.some((arg) => String(arg).includes("/commits/abc/check-runs")),
+    ),
   );
 });
 
@@ -102,7 +104,7 @@ test("times out when checks never resolve", async () => {
     execFileImplementation: async (_file, args) => {
       calls.push(args);
 
-      if (args.some((arg) => String(arg).includes("/pulls/7/checks"))) {
+      if (args.some((arg) => String(arg).includes("/commits/abc/check-runs"))) {
         return {
           stdout: JSON.stringify({
             check_runs: [

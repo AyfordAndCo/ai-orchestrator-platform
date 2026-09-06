@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import process from "node:process";
 import { URL, fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -11,6 +11,7 @@ import test from "node:test";
 import { git } from "../support/git-fixture.mjs";
 import {
   assertNoCustomGitHooks,
+  assertNoEmbeddedCredentials,
   assertOriginMatchesRepo,
   buildInstruction,
   deriveFeatureBranch,
@@ -24,6 +25,7 @@ import {
   requireArg,
   resolveExecutable,
   slugify,
+  validateFeatureBranch,
 } from "../../dist/apps/orchestrator-worker/src/cli/run-repository-issue.js";
 
 const execFileAsync = promisify(execFile);
@@ -226,7 +228,7 @@ test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeo
   const options = await readOptions(
     baseArgs({
       "required-actor": "some-bot",
-      "feature-branch": "agent/custom-branch",
+      "feature-branch": "agent/issue-42-custom-branch",
       "ci-timeout-ms": "5000",
       "validation-timeout-ms": "6000",
       "agent-timeout-ms": "7000",
@@ -235,7 +237,7 @@ test("readOptions honors explicit --required-actor, --feature-branch, --ci-timeo
     }),
   );
   assert.equal(options.requiredActor, "some-bot");
-  assert.equal(options.featureBranch, "agent/custom-branch");
+  assert.equal(options.featureBranch, "agent/issue-42-custom-branch");
   assert.equal(options.ciTimeoutMs, 5000);
   assert.equal(options.validationTimeoutMs, 6000);
   assert.equal(options.agentTimeoutMs, 7000);
@@ -253,6 +255,17 @@ test("readOptions rejects --base-branch outright rather than silently ignoring o
   await assert.rejects(
     readOptions(baseArgs({ "base-branch": "develop" })),
     /--base-branch is not supported/,
+  );
+});
+
+test("readOptions rejects an explicit --feature-branch that doesn't follow the convention or reference the issue", async () => {
+  await assert.rejects(
+    readOptions(baseArgs({ "feature-branch": "no-slash-here" })),
+    /does not follow this repository's/,
+  );
+  await assert.rejects(
+    readOptions(baseArgs({ "feature-branch": "agent/custom-branch" })),
+    /does not reference issue #42/,
   );
 });
 
@@ -379,6 +392,59 @@ test("deriveFeatureBranch follows the <developer>/<issue-key>-<short-description
   );
 });
 
+test("validateFeatureBranch accepts a branch matching the convention and referencing the issue", () => {
+  assert.doesNotThrow(() =>
+    validateFeatureBranch("allan/all-350-repository-foundation", 350),
+  );
+  assert.doesNotThrow(() =>
+    validateFeatureBranch("agent/issue-42-fix-the-login-page", 42),
+  );
+});
+
+test("validateFeatureBranch rejects a branch with no developer/issue-key structure", () => {
+  assert.throws(
+    () => validateFeatureBranch("no-slash-here", 42),
+    /does not follow this repository's/,
+  );
+  assert.throws(
+    () => validateFeatureBranch("/leading-slash-42", 42),
+    /does not follow this repository's/,
+  );
+});
+
+test("validateFeatureBranch rejects a branch that doesn't reference the issue number", () => {
+  assert.throws(
+    () => validateFeatureBranch("agent/custom-branch", 42),
+    /does not reference issue #42/,
+  );
+});
+
+test("assertNoEmbeddedCredentials rejects a URL with inline credentials", () => {
+  assert.throws(
+    () =>
+      assertNoEmbeddedCredentials(
+        "https://ghp_secrettoken@github.com/AyfordAndCo/example.git",
+      ),
+    /has embedded credentials/,
+  );
+  assert.throws(
+    () =>
+      assertNoEmbeddedCredentials(
+        "https://user:ghp_secrettoken@github.com/owner/repo.git",
+      ),
+    /has embedded credentials/,
+  );
+});
+
+test("assertNoEmbeddedCredentials accepts URLs without embedded credentials", () => {
+  assert.doesNotThrow(() =>
+    assertNoEmbeddedCredentials("https://github.com/AyfordAndCo/example.git"),
+  );
+  assert.doesNotThrow(() =>
+    assertNoEmbeddedCredentials("git@github.com:AyfordAndCo/example.git"),
+  );
+});
+
 test("redactSecrets scrubs bearer tokens, key=value secrets, and GitHub token formats", () => {
   assert.equal(
     redactSecrets("Authorization: Bearer abc123"),
@@ -478,6 +544,50 @@ test("assertNoCustomGitHooks refuses to run when core.hooksPath points into the 
       assertNoCustomGitHooks("git", root),
       /core\.hooksPath=\.husky/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCustomGitHooks refuses to run when a hook file is active in the default hooks directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-hooks-"));
+  try {
+    await git(root, "init", "-b", "main");
+    // Isolated the same way the implementation resolves it, so this test is
+    // unaffected by any global core.hooksPath the machine running it has
+    // configured (see readActiveDefaultHooks's own doc comment).
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", root, "rev-parse", "--git-path", "hooks"],
+      {
+        env: {
+          ...process.env,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: "/dev/null",
+        },
+      },
+    );
+    const hooksDirRaw = stdout.trim();
+    const hooksDir = isAbsolute(hooksDirRaw)
+      ? hooksDirRaw
+      : join(root, hooksDirRaw);
+    await writeFile(join(hooksDir, "pre-commit"), "#!/bin/sh\nexit 0\n");
+    await assert.rejects(
+      assertNoCustomGitHooks("git", root),
+      /active git hook\(s\).*pre-commit/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoCustomGitHooks ignores git's own *.sample hook templates", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-hooks-"));
+  try {
+    await git(root, "init", "-b", "main");
+    // `git init` itself populates .git/hooks with *.sample templates - the
+    // default, harmless state this check must not flag.
+    await assert.doesNotReject(assertNoCustomGitHooks("git", root));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

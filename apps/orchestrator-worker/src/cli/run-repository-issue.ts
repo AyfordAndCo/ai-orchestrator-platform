@@ -24,8 +24,8 @@
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { access, readdir } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -191,6 +191,10 @@ export async function readOptions(
   );
   const bunImage = args["bun-image"] as string | undefined;
   const dotnetImage = args["dotnet-image"] as string | undefined;
+  const featureBranch = args["feature-branch"] as string | undefined;
+  if (featureBranch !== undefined) {
+    validateFeatureBranch(featureBranch, issue);
+  }
   if (args["github-token"] !== undefined) {
     throw new RangeError(
       "--github-token is not supported: embedding a credential in the " +
@@ -227,9 +231,7 @@ export async function readOptions(
     ...(dotnetImage === undefined ? {} : { dotnetImage }),
     requiredActor:
       (args["required-actor"] as string | undefined) ?? "allanayford-dev",
-    ...(args["feature-branch"] === undefined
-      ? {}
-      : { featureBranch: args["feature-branch"] as string }),
+    ...(featureBranch === undefined ? {} : { featureBranch }),
     ciTimeoutMs,
     validationTimeoutMs,
     agentTimeoutMs,
@@ -337,12 +339,57 @@ async function readLocalHooksPath(
 }
 
 /**
- * This is a preflight mitigation, not a complete fix: it only catches a
- * hooksPath already configured on the source repository before the run
- * starts. GitChangePublisher's commit/push still don't pass --no-verify, so
- * an agent that reconfigures core.hooksPath locally during its own
- * execution would not be caught by this check. A complete fix belongs in
- * GitChangePublisher itself.
+ * Lists hook files present in the repository's actual hooks directory
+ * (resolved via `git rev-parse --git-path hooks`, so this also works for
+ * worktrees and any other non-default layout), excluding the harmless
+ * `*.sample` templates git ships by default. Any other file here would run
+ * with full host privileges on the next commit/push, since
+ * GitChangePublisher never passes --no-verify.
+ *
+ * Resolved with global/system config isolated (mirroring
+ * GitChangePublisher's own createGitEnvironment), not the operator's ambient
+ * environment: otherwise an operator with their own global core.hooksPath
+ * configured (e.g. for their own commit-signing workflow) would have that
+ * unrelated directory misreported as this repository's hooks directory, and
+ * either false-positive on a clean repository or miss a real one entirely.
+ */
+async function readActiveDefaultHooks(
+  gitPath: string,
+  repositoryPath: string,
+  readdirImplementation: typeof readdir = readdir,
+): Promise<readonly string[]> {
+  const { stdout } = await execFileAsync(
+    gitPath,
+    ["-C", repositoryPath, "rev-parse", "--git-path", "hooks"],
+    {
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+      },
+    },
+  );
+  const hooksDirRaw = stdout.trim();
+  const hooksDir = isAbsolute(hooksDirRaw)
+    ? hooksDirRaw
+    : join(repositoryPath, hooksDirRaw);
+  let entries: string[];
+  try {
+    entries = await readdirImplementation(hooksDir);
+  } catch {
+    // Hooks directory doesn't exist - nothing active.
+    return [];
+  }
+  return entries.filter((name) => !name.endsWith(".sample"));
+}
+
+/**
+ * This is a preflight mitigation, not a complete fix: it only catches hooks
+ * already present on the source repository before the run starts (a custom
+ * core.hooksPath, or files already sitting in the default hooks directory).
+ * GitChangePublisher's commit/push still don't pass --no-verify, so an agent
+ * that adds or modifies a hook during its own execution would not be caught
+ * by this check. A complete fix belongs in GitChangePublisher itself.
  */
 export async function assertNoCustomGitHooks(
   gitPath: string,
@@ -358,11 +405,42 @@ export async function assertNoCustomGitHooks(
         "git config --unset core.hooksPath",
     );
   }
+  const activeHooks = await readActiveDefaultHooks(gitPath, repositoryPath);
+  if (activeHooks.length > 0) {
+    throw new Error(
+      `Refusing to run: ${repositoryPath} has active git hook(s) in its ` +
+        `default hooks directory (${activeHooks.join(", ")}). ` +
+        "GitChangePublisher's commit/push do not pass --no-verify, so an " +
+        "agent-modified hook there would execute with full host privileges. " +
+        "Remove these hook files before running.",
+    );
+  }
 }
 
 /** Strips embedded userinfo (e.g. an inline PAT) before an origin URL is logged. */
 export function redactUrl(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
+}
+
+/**
+ * Fails closed on a URL with embedded userinfo (e.g. an inline PAT) rather
+ * than merely redacting it from logs. Codex's workspace and this clone share
+ * the same .git/config, and Codex's workspace has network access, so a
+ * credential placed here could be read via `git remote get-url origin` and
+ * exfiltrated before the intended push ever happens - the same risk that
+ * caused the earlier --github-token feature to be reverted (issue #33).
+ */
+export function assertNoEmbeddedCredentials(url: string): void {
+  if (/^[a-z][a-z0-9+.-]*:\/\/[^/@]+@/i.test(url.trim())) {
+    throw new Error(
+      `Refusing to run: ${redactUrl(url)} has embedded credentials in its ` +
+        "URL. Codex's workspace shares this clone's .git/config and has " +
+        "network access, so it could read and misuse this credential via " +
+        "`git remote get-url origin`. Reconfigure the remote without " +
+        "embedded credentials (e.g. SSH, or a credential helper) before " +
+        "running.",
+    );
+  }
 }
 
 /**
@@ -464,6 +542,35 @@ export function deriveFeatureBranch(issue: number, title: string): string {
   return `agent/issue-${issue}-${slugify(title)}`;
 }
 
+const FEATURE_BRANCH_PATTERN = /^[a-z][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+
+/**
+ * Validates an explicit --feature-branch against the same
+ * <developer>/<issue-key>-<short-description> structure (AGENTS.md) the
+ * generated default follows. GitChangePublisher only rejects a small set of
+ * unsafe names, so without this an operator override could create and push
+ * a noncompliant branch, or one that doesn't actually reference the issue
+ * being worked.
+ */
+export function validateFeatureBranch(branch: string, issue: number): void {
+  if (!FEATURE_BRANCH_PATTERN.test(branch)) {
+    throw new RangeError(
+      `--feature-branch "${branch}" does not follow this repository's ` +
+        "<developer>/<issue-key>-<short-description> convention " +
+        "(AGENTS.md), e.g. allan/all-350-repository-foundation.",
+    );
+  }
+  const issueKeySegment = branch.slice(branch.indexOf("/") + 1);
+  if (!new RegExp(`(?:^|\\D)${issue}(?:\\D|$)`).test(issueKeySegment)) {
+    throw new RangeError(
+      `--feature-branch "${branch}" does not reference issue #${issue} in ` +
+        "its issue-key segment, as required by the " +
+        "<developer>/<issue-key>-<short-description> convention " +
+        "(AGENTS.md).",
+    );
+  }
+}
+
 export function buildInstruction(issue: number, summary: IssueSummary): string {
   return [
     `Implement GitHub issue #${issue}: ${summary.title}`,
@@ -494,11 +601,13 @@ async function main(): Promise<void> {
     options.repositoryPath,
   );
   assertOriginMatchesRepo(originUrl, options.repo);
+  assertNoEmbeddedCredentials(originUrl);
   const pushUrls = await readPushUrls(options.gitPath, options.repositoryPath);
   for (const pushUrl of pushUrls) {
     if (pushUrl !== originUrl) {
       assertOriginMatchesRepo(pushUrl, options.repo);
     }
+    assertNoEmbeddedCredentials(pushUrl);
   }
 
   const runId = randomUUID();

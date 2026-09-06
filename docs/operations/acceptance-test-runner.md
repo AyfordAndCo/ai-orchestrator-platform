@@ -46,15 +46,23 @@ one before running this.
   runtimes without a dedicated image, rather than running them in the default
   npm/pnpm/yarn image. Without these flags, only npm/pnpm/yarn targets are
   actually supported by this runner today.
-- The target repository's `core.hooksPath` must be unset (git's default).
-  `GitChangePublisher`'s commit/push never pass `--no-verify`, so a
-  repository that points hooks into its tracked tree (as Husky does) would
+- The target repository must have no active git hooks. `GitChangePublisher`'s
+  commit/push never pass `--no-verify`, so either a repository that points
+  `core.hooksPath` into its tracked tree (as Husky does) or one with an
+  ordinary hook file already sitting in its default hooks directory would
   let an agent-modified hook execute with full host privileges, bypassing
   both the Codex and validation sandboxes. This runner refuses to start if
-  it detects a configured `core.hooksPath`. This is a preflight mitigation,
-  not a complete fix — it only catches a hooksPath already configured
-  before the run starts, not one the agent sets during its own execution.
-  A complete fix belongs in `GitChangePublisher` itself.
+  it detects either. This is a preflight mitigation, not a complete fix — it
+  only catches hooks already present before the run starts, not one the
+  agent adds during its own execution. A complete fix belongs in
+  `GitChangePublisher` itself.
+- The target repository's origin (and any separately configured push URL)
+  must not have credentials embedded in the URL. This runner fails closed on
+  that rather than only redacting it from logs: Codex's own workspace shares
+  this clone's `.git/config` and has network access, so an embedded
+  credential could be read via `git remote get-url origin` and misused
+  before the intended push ever happens (see
+  [#33](https://github.com/AyfordAndCo/ai-orchestrator-platform/issues/33)).
 - A `gh` session authenticated as whichever login is passed as
   `--required-actor` (defaults to `allanayford-dev`) — that is the identity
   `GhCliPullRequestPublisher` requires to own the created PR.
@@ -93,20 +101,20 @@ node dist/apps/orchestrator-worker/src/cli/run-repository-issue.js \
   --container-image "docker.io/ayfordandco/ai-orchestrator-platform-validation@sha256:<digest>"
 ```
 
-| Flag                                                          | Required    | Default                                 | Notes                                                                                                           |
-| ------------------------------------------------------------- | ----------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `--repo`                                                      | yes         |                                         | `owner/name`; verified against `--repository-path`'s actual fetch **and** push origin URLs before anything runs |
-| `--repository-path`                                           | yes         |                                         | local clone, must be clean and on `main`                                                                        |
-| `--issue`                                                     | yes         |                                         | GitHub issue number to implement                                                                                |
-| `--workspace-root`                                            | yes         |                                         | absolute; the isolated worktree is created under here                                                           |
-| `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                         |
-| `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                    |
-| `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | follows this repo's `<developer>/<issue-key>-<short-description>` convention                                    |
-| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute if passed                                                                                      |
-| `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                |
-| `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                     |
-| `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                  |
-| `--agent-timeout-ms`                                          | no          | `1200000` (20 min)                      | how long Codex may run before treating the execution as failed                                                  |
+| Flag                                                          | Required    | Default                                 | Notes                                                                                                               |
+| ------------------------------------------------------------- | ----------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `--repo`                                                      | yes         |                                         | `owner/name`; verified against `--repository-path`'s actual fetch **and** push origin URLs before anything runs     |
+| `--repository-path`                                           | yes         |                                         | local clone, must be clean and on `main`                                                                            |
+| `--issue`                                                     | yes         |                                         | GitHub issue number to implement                                                                                    |
+| `--workspace-root`                                            | yes         |                                         | absolute; the isolated worktree is created under here                                                               |
+| `--container-image`                                           | yes         |                                         | must be `sha256`-pinned; used for npm/pnpm/yarn targets                                                             |
+| `--bun-image` / `--dotnet-image`                              | conditional |                                         | must be `sha256`-pinned; required for a bun or dotnet target                                                        |
+| `--feature-branch`                                            | no          | `agent/issue-<n>-<slug of issue title>` | validated against this repo's `<developer>/<issue-key>-<short-description>` convention and must reference `--issue` |
+| `--codex-path` / `--git-path` / `--gh-path` / `--docker-path` | no          | resolved from `PATH`                    | must be absolute if passed                                                                                          |
+| `--required-actor`                                            | no          | `allanayford-dev`                       | the `gh` identity that must own the published PR                                                                    |
+| `--ci-timeout-ms`                                             | no          | `1200000` (20 min)                      | how long to wait for CI to reach a final state before treating it as failed                                         |
+| `--validation-timeout-ms`                                     | no          | `600000` (10 min)                       | how long the canonical validation command may run before treating it as failed                                      |
+| `--agent-timeout-ms`                                          | no          | `1200000` (20 min)                      | how long Codex may run before treating the execution as failed                                                      |
 
 Passing `--base-branch`, `--allow-host-validation`, or `--github-token` is
 rejected outright with an explanatory error — none of these are supported

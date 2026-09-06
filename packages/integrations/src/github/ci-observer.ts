@@ -151,7 +151,7 @@ export class GhCliCiObserver implements CiObserver {
         }>;
       }>(
         "get checks",
-        `repos/${repository}/pulls/${request.pullRequestNumber}/checks`,
+        `repos/${repository}/commits/${pullRequest.head.sha}/check-runs`,
       );
 
       const checks = (value.check_runs ?? []).map((check) => ({
