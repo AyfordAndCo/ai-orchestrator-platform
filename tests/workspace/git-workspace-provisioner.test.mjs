@@ -143,7 +143,18 @@ test("creates an isolated workspace and returns metadata", async () => {
       "--porcelain",
     );
 
-    assert.match(worktreeList, new RegExp(repository.workspacePath));
+    // `git worktree list --porcelain` always emits forward-slash paths, even
+    // on Windows, so comparing against the native (backslash) path here
+    // failed on every Windows run. Comparing substrings (after normalizing
+    // separators) also avoids treating a filesystem path - which can contain
+    // regex metacharacters - as a regular expression pattern.
+    const normalizedWorkspacePath = repository.workspacePath
+      .split("\\")
+      .join("/");
+    assert.ok(
+      worktreeList.includes(normalizedWorkspacePath),
+      `Expected worktree list to include ${normalizedWorkspacePath}, got:\n${worktreeList}`,
+    );
   } finally {
     await cleanup(repository);
   }
