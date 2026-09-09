@@ -3,6 +3,14 @@ import type {
   AgentExecutor,
 } from "../../../../packages/domain/src/agent-execution/index.js";
 
+import type {
+  AgentHarnessProvisioner,
+  AgentHarnessProvisionResult,
+  AgentHarnessTargetKind,
+} from "../../../../packages/domain/src/agent-harness/index.js";
+
+import { removeSeededPaths } from "./harness-workspace.js";
+
 import {
   GitBoundaryError,
   type GitBoundaryErrorCode,
@@ -39,6 +47,7 @@ import type {
 
 export const executionFailureCodes = {
   WORKSPACE_PREPARATION_FAILED: "WORKSPACE_PREPARATION_FAILED",
+  AGENT_HARNESS_PROVISION_FAILED: "AGENT_HARNESS_PROVISION_FAILED",
   AGENT_EXECUTION_FAILED: "AGENT_EXECUTION_FAILED",
   VALIDATION_FAILED: "VALIDATION_FAILED",
   GIT_BOUNDARY_FAILED: "GIT_BOUNDARY_FAILED",
@@ -77,12 +86,20 @@ export interface ExecuteRunDependencies {
   readonly gitPublisher: GitPublisher;
   readonly pullRequestPublisher?: PullRequestPublisher;
   readonly ciObserver?: CiObserver;
+  /**
+   * Optional agent-harness provisioner. When provided, the harness is seeded
+   * into the workspace after provisioning and before agent execution; its
+   * seeded files are kept out of the run's committed diff.
+   */
+  readonly harnessProvisioner?: AgentHarnessProvisioner;
+  readonly harnessTargetKind?: AgentHarnessTargetKind;
   readonly now?: () => Date;
 }
 
 export interface ExecuteRunResult {
   readonly run: OrchestrationRun;
   readonly workspace?: Workspace;
+  readonly harnessProvision?: AgentHarnessProvisionResult;
   readonly agentExecution?: AgentExecutionResult;
   readonly validationFailure?: ExecuteRunValidationFailure;
   readonly gitInspection?: GitChangeInspectionResult;
@@ -171,11 +188,41 @@ export async function executeRun(
 
   run = transitionRun(run, runStates.READY, now());
 
+  let harness: AgentHarnessProvisionResult | undefined;
+
+  if (dependencies.harnessProvisioner !== undefined) {
+    try {
+      harness = await dependencies.harnessProvisioner.provision({
+        runId: request.runId,
+        issueId: request.workspace.issueId,
+        workspace: Object.freeze({ ...workspace }),
+        targetKind: dependencies.harnessTargetKind ?? "codex",
+      });
+    } catch (error) {
+      return {
+        run: failRun(
+          run,
+          {
+            code: executionFailureCodes.AGENT_HARNESS_PROVISION_FAILED,
+            message: getFailureMessage(error),
+          },
+          now(),
+        ),
+        workspace,
+      };
+    }
+  }
+
   run = transitionRun(run, runStates.EXECUTING, now());
 
   const agentWorkspace: Readonly<Workspace> = Object.freeze({
     ...workspace,
   });
+
+  const instruction =
+    harness?.instructionPreamble === undefined
+      ? request.instruction
+      : `${harness.instructionPreamble}\n\n${request.instruction}`;
 
   let agentExecution: AgentExecutionResult;
 
@@ -184,7 +231,7 @@ export async function executeRun(
       runId: request.runId,
       issueId: request.workspace.issueId,
       workspace: agentWorkspace,
-      instruction: request.instruction,
+      instruction,
     });
   } catch (error) {
     return {
@@ -198,6 +245,10 @@ export async function executeRun(
       ),
       workspace,
     };
+  }
+
+  if (harness !== undefined) {
+    await removeSeededPaths(workspace.workspacePath, harness.seededPaths);
   }
 
   run = transitionRun(run, runStates.INSPECTING_CHANGES, now());
@@ -430,6 +481,7 @@ export async function executeRun(
   return {
     run,
     workspace,
+    ...(harness === undefined ? {} : { harnessProvision: harness }),
     agentExecution,
     gitInspection,
     gitCommit: commit,
