@@ -81,37 +81,25 @@ export const KEEP_SKILLS = [
  *                                root `AGENTS.md` is authoritative here.
  *   - `skills/dmux-workflows`  — dmux docs pulled in by `workflow-quality`.
  *   - `scripts/orchestrate-*`  — tmux/dmux worktree runners.
- *   - `commands/multi-workflow`,
- *     `commands/epic-*`,
- *     `commands/project-init`,
- *     `commands/plan-canvas`   — command shims whose documented entrypoints
- *                                (`scripts/orchestrate-worktrees.js`,
- *                                `scripts/github-coordination.js`,
- *                                `scripts/install-apply.js`,
- *                                `scripts/plan-canvas.js`) are not part of this
- *                                trimmed bundle, so the shims would fail with
- *                                MODULE_NOT_FOUND.
+ *   - `commands/`              — ECC's own README calls these "legacy command
+ *                                shims" and states skills are the primary
+ *                                surface. Many shims run `node scripts/<x>.js`
+ *                                assuming CWD is the ECC plugin root, which
+ *                                fails from a repository root
+ *                                (`MODULE_NOT_FOUND`). The skills and agents
+ *                                they front are kept.
  */
 export const DROP_PATHS = [
   ".agents",
   ".pi",
   "AGENTS.md",
+  "commands",
   "skills/dmux-workflows",
   "scripts/lib/orchestration-session.js",
   "scripts/lib/tmux-worktree-orchestrator.js",
   "scripts/orchestrate-codex-worker.sh",
   "scripts/orchestrate-worktrees.js",
   "scripts/orchestration-status.js",
-  "commands/multi-workflow.md",
-  "commands/epic-claim.md",
-  "commands/epic-decompose.md",
-  "commands/epic-publish.md",
-  "commands/epic-review.md",
-  "commands/epic-sync.md",
-  "commands/epic-unblock.md",
-  "commands/epic-validate.md",
-  "commands/project-init.md",
-  "commands/plan-canvas.md",
 ];
 
 /**

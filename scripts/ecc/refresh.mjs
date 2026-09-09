@@ -236,8 +236,10 @@ function writeManifest(targetRoot) {
 function buildInto(targetRoot) {
   const workDir = mkdtempSync(join(tmpdir(), "ecc-refresh-"));
   const stashDir = mkdtempSync(join(tmpdir(), "ecc-localstate-"));
+  let stashed = false;
   try {
     stashLocalState(targetRoot, stashDir);
+    stashed = true;
     cloneEcc(workDir);
     installBundle(workDir, targetRoot);
     pruneRuleLangs(targetRoot);
@@ -246,8 +248,16 @@ function buildInto(targetRoot) {
     settingsToExample(targetRoot);
     writeCjsBoundary(targetRoot);
     writeManifest(targetRoot);
-    restoreLocalState(targetRoot, stashDir);
   } finally {
+    // Always put the machine-local state back, even when the rebuild threw
+    // after `installBundle` removed the previous `.claude/`.
+    if (stashed) {
+      try {
+        restoreLocalState(targetRoot, stashDir);
+      } catch (error) {
+        console.warn(`[ecc] could not restore local state: ${error.message}`);
+      }
+    }
     rmSync(workDir, { recursive: true, force: true });
     rmSync(stashDir, { recursive: true, force: true });
   }

@@ -97,14 +97,12 @@ if (process.argv.includes("--disable")) {
   if (Object.keys(userHooks).length > 0) current.hooks = userHooks;
   else delete current.hooks;
 
-  const remaining = Object.keys(current);
-  if (
-    remaining.length === 0 ||
-    (remaining.length === 1 && current.includeCoAuthoredBy !== undefined)
-  ) {
+  if (Object.keys(current).length === 0) {
     rmSync(settingsPath, { force: true });
-    console.log("[ecc] removed .claude/settings.json (nothing left but ECC)");
+    console.log("[ecc] removed .claude/settings.json (nothing left)");
   } else {
+    // Keep every remaining key. A leftover `includeCoAuthoredBy` that `enable`
+    // may have added is harmless; deleting a value the contributor set is not.
     writeJson(settingsPath, current);
     console.log("[ecc] removed ECC hook entries; kept your own hooks/settings");
   }

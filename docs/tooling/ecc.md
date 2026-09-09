@@ -4,7 +4,7 @@ This repository vendors [ECC](https://github.com/allanayford-dev/ECC) ("Agent
 Harness Operating System") under `.claude/` so that any agent or contributor
 working **on** `ai-orchestrator-platform` inherits a consistent
 plan → test → implement → review → verify → remember workflow (skills, agents,
-slash commands, and coding rules).
+and coding rules).
 
 ECC is not a runtime dependency of the platform. It is a set of context assets
 for AI coding harnesses. The platform's own product code does not import it.
@@ -18,7 +18,6 @@ for AI coding harnesses. The platform's own product code does not import it.
 | Path                                 | Contents                                                                                      |
 | ------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `.claude/agents/`                    | 68 ECC subagent definitions                                                                   |
-| `.claude/commands/`                  | 94 slash-command shims                                                                        |
 | `.claude/skills/`                    | Workflow-quality, database, unified-memory, and a curated subset of framework/language skills |
 | `.claude/rules/ecc/`                 | `common` + `typescript` coding rules only                                                     |
 | `.claude/hooks/`, `.claude/scripts/` | Hook runtime scripts (inactive unless hooks are enabled — see below)                          |
@@ -32,6 +31,10 @@ for AI coding harnesses. The platform's own product code does not import it.
   `KEEP_SKILLS` in `scripts/ecc/config.mjs`.
 - `orchestration` module (tmux/dmux worktree runners) is **excluded**.
 - `rules-core` language packs are pruned to `common` and `typescript`.
+- `.claude/commands/` (ECC's "legacy command shims") is **dropped**. Many shims
+  run `node scripts/<x>.js` assuming CWD is the ECC plugin root and fail from a
+  repository root; ECC's own guidance is skills-first. The skills and agents
+  they fronted are kept.
 
 ## Hooks are opt-in
 

@@ -44,22 +44,13 @@
     ".agents",
     ".pi",
     "AGENTS.md",
+    "commands",
     "skills/dmux-workflows",
     "scripts/lib/orchestration-session.js",
     "scripts/lib/tmux-worktree-orchestrator.js",
     "scripts/orchestrate-codex-worker.sh",
     "scripts/orchestrate-worktrees.js",
-    "scripts/orchestration-status.js",
-    "commands/multi-workflow.md",
-    "commands/epic-claim.md",
-    "commands/epic-decompose.md",
-    "commands/epic-publish.md",
-    "commands/epic-review.md",
-    "commands/epic-sync.md",
-    "commands/epic-unblock.md",
-    "commands/epic-validate.md",
-    "commands/project-init.md",
-    "commands/plan-canvas.md"
+    "scripts/orchestration-status.js"
   ],
   "note": "Generated bundle. Do not hand-edit. Run `pnpm ecc:refresh` to update."
 }
