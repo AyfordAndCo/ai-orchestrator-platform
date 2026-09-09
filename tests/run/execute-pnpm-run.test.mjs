@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import {
   access,
   chmod,
@@ -539,5 +540,62 @@ process.stdout.write("worker-validation-ok");
       recursive: true,
       force: true,
     });
+  }
+});
+
+test("seeds the ECC harness bundle and strips it before change inspection", async () => {
+  const fixture = await createFixture(`
+process.stdout.write("worker-validation-ok");
+`);
+
+  const bundleRoot = join(fixture.rootPath, "ecc-bundle");
+  await mkdir(join(bundleRoot, "skills", "tdd-workflow"), { recursive: true });
+  await writeFile(
+    join(bundleRoot, "skills", "tdd-workflow", "SKILL.md"),
+    "# tdd\n",
+  );
+
+  try {
+    const result = await withCodexEnvironment(fixture, () =>
+      executePnpmRun(
+        {
+          runId: "ecc-harness-pnpm-run",
+          repository: "allan/repo",
+          instruction: "Implement test change.",
+          workspace: createWorkspaceRequest(fixture.workspacePath),
+        },
+        {
+          workspaceProvisioner: createProvisioner(),
+          gitPublisher,
+          validation: { verifyCandidateCommit: false },
+          agentExecution: {
+            executablePath: fixture.codexPath,
+            allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+          },
+          agentHarness: {
+            bundleRoot,
+            allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+          },
+        },
+      ),
+    );
+
+    assert.equal(result.run.state, runStates.COMPLETED);
+    assert.deepEqual(result.harnessProvision?.seededPaths, [".ecc-harness"]);
+
+    const instruction = await readFile(
+      join(fixture.workspacePath, "AGENT_INSTRUCTION.txt"),
+      "utf8",
+    );
+    assert.match(instruction, /^You are working inside an ECC-managed/);
+    assert.ok(instruction.trimEnd().endsWith("Implement test change."));
+
+    assert.equal(
+      existsSync(join(fixture.workspacePath, ".ecc-harness")),
+      false,
+      "seeded bundle should be removed before change inspection",
+    );
+  } finally {
+    await rm(fixture.rootPath, { recursive: true, force: true });
   }
 });

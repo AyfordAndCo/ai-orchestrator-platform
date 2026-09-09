@@ -23,6 +23,11 @@ import {
 } from "../../../../packages/integrations/src/agent-execution/index.js";
 
 import {
+  EccHarnessProvisioner,
+  type EccHarnessProvisionerOptions,
+} from "../../../../packages/integrations/src/agent-harness/index.js";
+
+import {
   PnpmWorkspaceValidator,
   type PnpmWorkspaceValidatorOptions,
 } from "../../../../packages/integrations/src/validation/index.js";
@@ -37,6 +42,12 @@ import {
 export interface ExecutePnpmRunDependencies {
   readonly workspaceProvisioner: WorkspaceProvisioner;
   readonly agentExecution: CodexCliAgentExecutorOptions;
+  /**
+   * When provided, the vendored ECC bundle is seeded into each agent workspace
+   * before execution. This boundary always runs the Codex executor, so the
+   * harness is provisioned for the `"codex"` target.
+   */
+  readonly agentHarness?: EccHarnessProvisionerOptions;
   readonly validation?: PnpmWorkspaceValidatorOptions;
   readonly validator?: WorkspaceValidator;
   readonly gitPublication?: GitChangePublisherOptions;
@@ -53,6 +64,11 @@ export async function executePnpmRun(
   dependencies: ExecutePnpmRunDependencies,
 ): Promise<ExecuteRunResult> {
   const agentExecutor = new CodexCliAgentExecutor(dependencies.agentExecution);
+
+  const harnessProvisioner =
+    dependencies.agentHarness === undefined
+      ? undefined
+      : new EccHarnessProvisioner(dependencies.agentHarness);
 
   const validator =
     dependencies.validator ??
@@ -86,6 +102,9 @@ export async function executePnpmRun(
     agentExecutor,
     validator,
     gitPublisher,
+    ...(harnessProvisioner === undefined
+      ? {}
+      : { harnessProvisioner, harnessTargetKind: "codex" as const }),
     ...(pullRequestPublisher === undefined ? {} : { pullRequestPublisher }),
     ...(ciObserver === undefined ? {} : { ciObserver }),
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),

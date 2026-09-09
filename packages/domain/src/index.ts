@@ -1,4 +1,5 @@
 export * from "./agent-execution/index.js";
+export * from "./agent-harness/index.js";
 export * from "./git/index.js";
 export * from "./github/index.js";
 export * from "./provider/index.js";
