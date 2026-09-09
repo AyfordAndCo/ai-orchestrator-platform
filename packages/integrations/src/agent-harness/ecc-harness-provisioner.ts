@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { cpSync } from "node:fs";
 import {
   lstat,
@@ -10,6 +11,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import {
   AgentHarnessProvisioningError,
@@ -98,6 +102,23 @@ async function measureTree(
   }
 
   await walk(root);
+}
+
+/** True when `relPath` is committed in the workspace's `HEAD`. */
+async function isCommittedInRepo(
+  workspaceRoot: string,
+  relPath: string,
+): Promise<boolean> {
+  try {
+    await execFileAsync(
+      "git",
+      ["-C", workspaceRoot, "cat-file", "-e", `HEAD:${relPath}`],
+      { windowsHide: true },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function requireSafeWorkspace(
@@ -238,8 +259,22 @@ export class EccHarnessProvisioner implements AgentHarnessProvisioner {
 
     const seedRoot = join(workspaceRoot, SEED_DIR);
 
-    // Only replace a `SEED_DIR` this provisioner created (identified by the
-    // marker). A pre-existing directory with real content is left untouched.
+    // If the target repository commits `SEED_DIR` (even as `SEED_DIR/SEED_MARKER`),
+    // never touch it: the marker check alone would misclassify it as ours and the
+    // pre-copy `rm` would delete tracked content.
+    if (
+      (await isCommittedInRepo(workspaceRoot, SEED_DIR)) ||
+      (await isCommittedInRepo(workspaceRoot, `${SEED_DIR}/${SEED_MARKER}`))
+    ) {
+      throw new AgentHarnessProvisioningError(
+        agentHarnessErrorCodes.HARNESS_WORKSPACE_REJECTED,
+        `${SEED_DIR}/ is committed in this repository; refusing to seed`,
+      );
+    }
+
+    // Otherwise only replace a `SEED_DIR` this provisioner created (identified by
+    // the marker). A pre-existing untracked directory with real content is left
+    // untouched.
     let existing: Awaited<ReturnType<typeof lstat>> | undefined;
     try {
       existing = await lstat(seedRoot);

@@ -205,7 +205,7 @@ test("fails the run when harness provisioning throws and skips execution", async
   }
 });
 
-test("removeSeededPaths ignores unsafe, escaping, and git-tracked paths", async () => {
+test("removeSeededPaths keeps HEAD files, removes unsafe/escaping/staged seeds", async () => {
   const workspacePath = initWorkspace();
   try {
     execFileSync("git", ["-C", workspacePath, "config", "user.email", "t@t"], {
@@ -215,7 +215,7 @@ test("removeSeededPaths ignores unsafe, escaping, and git-tracked paths", async 
       windowsHide: true,
     });
 
-    // A tracked file that must survive cleanup.
+    // A file committed in HEAD that must survive cleanup.
     await writeFile(
       join(workspacePath, "AGENTS.md"),
       "real repo file\n",
@@ -232,30 +232,40 @@ test("removeSeededPaths ignores unsafe, escaping, and git-tracked paths", async 
     const outside = join(workspacePath, "..", "outside-sentinel.txt");
     await writeFile(outside, "keep me\n", "utf8");
 
-    // A legitimately seeded untracked path that should be removed.
+    // A seeded dir the agent staged (`git add`) but never committed.
     await mkdir(join(workspacePath, ".ecc-harness"), { recursive: true });
     await writeFile(
       join(workspacePath, ".ecc-harness", "skill.md"),
       "seeded\n",
       "utf8",
     );
+    execFileSync("git", ["-C", workspacePath, "add", "-A"], {
+      windowsHide: true,
+    });
 
     await removeSeededPaths(workspacePath, [
-      "AGENTS.md", // tracked -> keep
+      "AGENTS.md", // in HEAD -> keep
       "../outside-sentinel.txt", // escapes -> skip
       "", // empty -> skip
-      ".ecc-harness", // safe untracked -> remove
+      ".ecc-harness", // staged but not in HEAD -> unstage + remove
     ]);
 
-    assert.ok(
-      existsSync(join(workspacePath, "AGENTS.md")),
-      "tracked file kept",
-    );
+    assert.ok(existsSync(join(workspacePath, "AGENTS.md")), "HEAD file kept");
     assert.ok(existsSync(outside), "escaping path untouched");
     assert.equal(
       existsSync(join(workspacePath, ".ecc-harness")),
       false,
-      "safe seeded path removed",
+      "staged seed removed",
+    );
+    const staged = execFileSync(
+      "git",
+      ["-C", workspacePath, "diff", "--cached", "--name-only"],
+      { encoding: "utf8", windowsHide: true },
+    );
+    assert.equal(
+      staged.includes(".ecc-harness"),
+      false,
+      "seed unstaged from the index",
     );
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });

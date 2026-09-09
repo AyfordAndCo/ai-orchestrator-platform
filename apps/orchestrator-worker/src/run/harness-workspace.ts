@@ -12,10 +12,12 @@ const execFileAsync = promisify(execFile);
  *
  * `seededPaths` comes from a provisioner (`AgentHarnessProvisionResult`) and is
  * treated as untrusted: each entry must be a workspace-relative POSIX path with
- * no `.`/`..` segments, its real parent directory must still resolve inside the
- * real workspace root (so a symlinked ancestor cannot redirect the delete), and
- * it must not already be tracked by git. Anything else is skipped with a
- * warning rather than deleted.
+ * no `.`/`..` segments, and its real parent directory must still resolve inside
+ * the real workspace root (so a symlinked ancestor cannot redirect the delete).
+ *
+ * A path that exists in `HEAD` is a real repository file and is left untouched.
+ * A path the agent merely staged (`git add`) is not in `HEAD`; it is unstaged
+ * and removed so it does not reach change inspection.
  */
 
 function isSafeRelativePath(seededPath: string): boolean {
@@ -27,19 +29,46 @@ function isSafeRelativePath(seededPath: string): boolean {
   );
 }
 
-async function isTrackedByGit(
+/** True when the path is committed in `HEAD` (not merely staged in the index). */
+async function existsInHead(
   workspaceRoot: string,
   seededPath: string,
 ): Promise<boolean> {
   try {
     await execFileAsync(
       "git",
-      ["-C", workspaceRoot, "ls-files", "--error-unmatch", "--", seededPath],
+      ["-C", workspaceRoot, "cat-file", "-e", `HEAD:${seededPath}`],
       { windowsHide: true },
     );
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Drop any index entry for the path so a staged seed never reaches inspection. */
+async function unstage(
+  workspaceRoot: string,
+  seededPath: string,
+): Promise<void> {
+  try {
+    await execFileAsync(
+      "git",
+      [
+        "-C",
+        workspaceRoot,
+        "rm",
+        "--cached",
+        "-r",
+        "--ignore-unmatch",
+        "--quiet",
+        "--",
+        seededPath,
+      ],
+      { windowsHide: true },
+    );
+  } catch {
+    // No index entry / no repo — nothing to unstage.
   }
 }
 
@@ -90,11 +119,14 @@ export async function removeSeededPaths(
       continue;
     }
 
-    if (await isTrackedByGit(realRoot, seededPath)) {
-      warn(`seeded path is tracked by git, leaving in place: ${seededPath}`);
+    if (await existsInHead(realRoot, seededPath)) {
+      warn(
+        `seeded path is committed in the repository, leaving in place: ${seededPath}`,
+      );
       continue;
     }
 
+    await unstage(realRoot, seededPath);
     await rm(target, { recursive: true, force: true });
 
     let parent = dirname(target);

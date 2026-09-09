@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -396,6 +397,51 @@ test("a failed seed leaves no partial .ecc-harness or staging directory", async 
     );
   } finally {
     await chmod(fixture.workspacePath, 0o755).catch(() => {});
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a workspace that commits .ecc-harness in HEAD", async () => {
+  const fixture = await createFixture();
+  try {
+    const git = (...args) =>
+      execFileSync("git", ["-C", fixture.workspacePath, ...args], {
+        windowsHide: true,
+      });
+    git("init", "--quiet");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    await mkdir(join(fixture.workspacePath, ".ecc-harness"), {
+      recursive: true,
+    });
+    // Commit the marker file, mimicking the exact "looks like ours" trap.
+    await writeFile(
+      join(fixture.workspacePath, ".ecc-harness", ".ecc-seed"),
+      "committed by the repo\n",
+    );
+    git("add", "-A");
+    git("commit", "-qm", "vendor ecc-harness");
+
+    const provisioner = new EccHarnessProvisioner({
+      bundleRoot: fixture.bundleRoot,
+      allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+    });
+
+    await assert.rejects(
+      provisioner.provision(request(fixture.workspacePath, "codex")),
+      (error) => {
+        assert.equal(
+          error.code,
+          agentHarnessErrorCodes.HARNESS_WORKSPACE_REJECTED,
+        );
+        return true;
+      },
+    );
+    assert.ok(
+      existsSync(join(fixture.workspacePath, ".ecc-harness", ".ecc-seed")),
+      "committed marker file must be untouched",
+    );
+  } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
