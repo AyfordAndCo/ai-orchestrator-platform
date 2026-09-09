@@ -332,6 +332,18 @@ if (checkMode) {
   console.log("[ecc] committed .claude/ matches ECC_REF");
 } else {
   buildInto(claudeDir);
+
+  // If the contributor had opted into hooks, re-merge the freshly generated ECC
+  // hook set into their restored settings.json: new ids are added, stale ids are
+  // dropped, and their own hooks are preserved. Without this the restored file
+  // would keep pointing at renamed/removed hook scripts.
+  if (existsSync(join(claudeDir, "settings.json"))) {
+    console.log("[ecc] re-merging ECC hooks into the restored settings.json");
+    run("node", [join(repoRoot, "scripts", "ecc", "enable-hooks.mjs")], {
+      quiet: true,
+    });
+  }
+
   console.log("\n[ecc] .claude/ rebuilt. Review and commit:\n");
   console.log(gitStatusPorcelain(".claude") || "(no changes)");
 }

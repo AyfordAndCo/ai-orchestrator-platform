@@ -51,14 +51,21 @@ function backup() {
 }
 
 /** Every `id` that appears in an ECC `hooks` block, per event. */
-function eccHookIds(hooks) {
-  const ids = new Set();
-  for (const groups of Object.values(hooks ?? {})) {
+/** Map of event name -> Set of ECC-owned hook-group ids for that event. */
+function eccHookIdsByEvent(hooks) {
+  const byEvent = new Map();
+  for (const [event, groups] of Object.entries(hooks ?? {})) {
+    const ids = new Set();
     for (const group of groups ?? []) {
       if (typeof group?.id === "string") ids.add(group.id);
     }
+    byEvent.set(event, ids);
   }
-  return ids;
+  return byEvent;
+}
+
+function isEccGroup(byEvent, event, group) {
+  return byEvent.get(event)?.has(group?.id) ?? false;
 }
 
 function readExampleHooks() {
@@ -86,12 +93,14 @@ if (process.argv.includes("--disable")) {
     console.log("[ecc] no .claude/settings.json; nothing to disable");
     process.exit(0);
   }
-  const eccIds = eccHookIds(readExampleHooks().hooks);
+  const eccByEvent = eccHookIdsByEvent(readExampleHooks().hooks);
   backup();
   const current = readJson(settingsPath);
   const userHooks = {};
   for (const [event, groups] of Object.entries(current.hooks ?? {})) {
-    const kept = (groups ?? []).filter((group) => !eccIds.has(group?.id));
+    const kept = (groups ?? []).filter(
+      (group) => !isEccGroup(eccByEvent, event, group),
+    );
     if (kept.length > 0) userHooks[event] = kept;
   }
   if (Object.keys(userHooks).length > 0) current.hooks = userHooks;
@@ -111,13 +120,14 @@ if (process.argv.includes("--disable")) {
 }
 
 const localizedExample = readExampleHooks();
-const eccIds = eccHookIds(localizedExample.hooks);
+const eccByEvent = eccHookIdsByEvent(localizedExample.hooks);
 
 const merged = existsSync(settingsPath) ? readJson(settingsPath) : {};
 backup();
 
-// Merge per event: keep the user's groups whose id is not ECC-owned, then
-// append the ECC groups. Never discard a user hook.
+// Merge per event: keep the user's groups whose id is not ECC-owned for that
+// same event, then append the current ECC groups. Never discard a user hook,
+// and drop stale ECC ids that no longer appear in the example.
 const mergedHooks = {};
 const events = new Set([
   ...Object.keys(merged.hooks ?? {}),
@@ -125,10 +135,11 @@ const events = new Set([
 ]);
 for (const event of events) {
   const userGroups = (merged.hooks?.[event] ?? []).filter(
-    (group) => !eccIds.has(group?.id),
+    (group) => !isEccGroup(eccByEvent, event, group),
   );
   const eccGroups = localizedExample.hooks?.[event] ?? [];
-  mergedHooks[event] = [...userGroups, ...eccGroups];
+  const combined = [...userGroups, ...eccGroups];
+  if (combined.length > 0) mergedHooks[event] = combined;
 }
 merged.hooks = mergedHooks;
 if (

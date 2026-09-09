@@ -46,6 +46,8 @@
     "AGENTS.md",
     "commands",
     "skills/dmux-workflows",
+    "skills/ecc-guide",
+    "skills/ecc-recipes",
     "scripts/lib/orchestration-session.js",
     "scripts/lib/tmux-worktree-orchestrator.js",
     "scripts/orchestrate-codex-worker.sh",

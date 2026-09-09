@@ -88,6 +88,10 @@ export const KEEP_SKILLS = [
  *                                fails from a repository root
  *                                (`MODULE_NOT_FOUND`). The skills and agents
  *                                they front are kept.
+ *   - `skills/ecc-guide`,
+ *     `skills/ecc-recipes`     — meta-skills that classify/execute ECC's own
+ *                                command catalog and installer CLIs, neither of
+ *                                which is part of this trimmed bundle.
  */
 export const DROP_PATHS = [
   ".agents",
@@ -95,6 +99,8 @@ export const DROP_PATHS = [
   "AGENTS.md",
   "commands",
   "skills/dmux-workflows",
+  "skills/ecc-guide",
+  "skills/ecc-recipes",
   "scripts/lib/orchestration-session.js",
   "scripts/lib/tmux-worktree-orchestrator.js",
   "scripts/orchestrate-codex-worker.sh",
