@@ -218,16 +218,26 @@ if (checkMode) {
     .split("\0")
     .filter((line) => line.length > 0);
 
+  // Read committed content from the git blob (not the working tree) so a
+  // Windows autocrlf checkout does not read back as drift.
+  const committedBlob = (relFromRepo) =>
+    run("git", ["-C", repoRoot, "show", `HEAD:${relFromRepo}`], {
+      quiet: true,
+      encoding: "buffer",
+    });
+  const normalize = (buf) => buf.toString("utf8").replace(/\r\n/g, "\n");
+
   const drift = [];
   const seen = new Set();
   for (const relFromRepo of tracked) {
     const relFromClaude = relFromRepo.replace(/^\.claude\//, "");
     seen.add(relFromClaude);
-    const committed = join(repoRoot, relFromRepo);
     const rebuilt = join(tmpClaude, ...relFromClaude.split("/"));
     if (!existsSync(rebuilt)) {
       drift.push(`- removed upstream: ${relFromRepo}`);
-    } else if (!readFileSync(committed).equals(readFileSync(rebuilt))) {
+    } else if (
+      normalize(committedBlob(relFromRepo)) !== normalize(readFileSync(rebuilt))
+    ) {
       drift.push(`- changed: ${relFromRepo}`);
     }
   }
