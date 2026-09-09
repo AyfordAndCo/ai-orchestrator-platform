@@ -3,6 +3,7 @@ name: Independent review quorum
 on:
   pull_request:
     branches:
+      - develop
       - main
 
 permissions:
