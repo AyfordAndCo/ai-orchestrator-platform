@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import process from "node:process";
 import test from "node:test";
 
 import { runStates } from "../../dist/packages/domain/src/run/index.js";
@@ -151,12 +152,6 @@ test("seeds the harness, prepends the preamble, and strips seeded files before i
       { encoding: "utf8", windowsHide: true },
     );
     assert.equal(status.trim(), "");
-
-    const exclude = readFileSync(
-      join(workspacePath, ".git", "info", "exclude"),
-      "utf8",
-    );
-    for (const rel of seededPaths) assert.ok(exclude.includes(`/${rel}`));
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }
@@ -265,5 +260,28 @@ test("removeSeededPaths ignores unsafe, escaping, and git-tracked paths", async 
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
     rmSync(join(workspacePath, "..", "outside-sentinel.txt"), { force: true });
+  }
+});
+
+test("removeSeededPaths refuses a seeded path behind a symlinked ancestor", async () => {
+  if (process.platform === "win32") return; // symlink creation restricted here
+
+  const workspacePath = initWorkspace();
+  const outsideDir = mkdtempSync(join(tmpdir(), "harness-outside-"));
+  try {
+    const { writeFile: wf, symlink } = await import("node:fs/promises");
+    await wf(join(outsideDir, "victim.txt"), "do not delete\n", "utf8");
+    // Agent turns a workspace subdir into a symlink to an outside directory.
+    await symlink(outsideDir, join(workspacePath, "link"), "dir");
+
+    await removeSeededPaths(workspacePath, ["link/victim.txt"]);
+
+    assert.ok(
+      existsSync(join(outsideDir, "victim.txt")),
+      "file behind the symlinked ancestor must survive",
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
   }
 });

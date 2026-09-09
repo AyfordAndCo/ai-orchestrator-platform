@@ -1,21 +1,21 @@
 import { execFile } from "node:child_process";
-import { readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readdir, realpath, rm, rmdir } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Helpers for keeping agent-harness files that were seeded into a workspace out
- * of the run's committed diff. `removeSeededPaths` is authoritative;
- * `excludeSeededPaths` is a best-effort guard against the agent staging the
- * files before they are removed.
+ * Removes agent-harness files that were seeded into a workspace so they never
+ * reach the run's committed diff. Called after agent execution and before change
+ * inspection.
  *
- * Seeded paths come from a provisioner (`AgentHarnessProvisionResult.seededPaths`)
- * and are treated as untrusted: each must be a workspace-relative POSIX path with
- * no `.`/`..` segments, must resolve inside the workspace, and must not already
- * be tracked by git. Anything else is skipped with a warning rather than acted
- * on, so a malformed value can never delete the worktree or a real file.
+ * `seededPaths` comes from a provisioner (`AgentHarnessProvisionResult`) and is
+ * treated as untrusted: each entry must be a workspace-relative POSIX path with
+ * no `.`/`..` segments, its real parent directory must still resolve inside the
+ * real workspace root (so a symlinked ancestor cannot redirect the delete), and
+ * it must not already be tracked by git. Anything else is skipped with a
+ * warning rather than deleted.
  */
 
 function isSafeRelativePath(seededPath: string): boolean {
@@ -25,18 +25,6 @@ function isSafeRelativePath(seededPath: string): boolean {
   return segments.every(
     (segment) => segment.length > 0 && segment !== "." && segment !== "..",
   );
-}
-
-function resolveInsideWorkspace(
-  workspaceRoot: string,
-  seededPath: string,
-): string | undefined {
-  const target = resolve(workspaceRoot, seededPath);
-  const rel = relative(workspaceRoot, target);
-  if (rel.length === 0 || rel === ".." || rel.startsWith(`..${sep}`)) {
-    return undefined;
-  }
-  return target;
 }
 
 async function isTrackedByGit(
@@ -55,53 +43,6 @@ async function isTrackedByGit(
   }
 }
 
-/** Append seeded paths to the workspace's git exclude file. Best effort. */
-export async function excludeSeededPaths(
-  workspaceRoot: string,
-  seededPaths: readonly string[],
-): Promise<void> {
-  const safe = seededPaths.filter(isSafeRelativePath);
-  if (safe.length === 0) return;
-
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", workspaceRoot, "rev-parse", "--git-path", "info/exclude"],
-      { windowsHide: true },
-    );
-    const excludeFile = stdout.trim();
-    if (excludeFile.length === 0) return;
-
-    // In linked worktrees `--git-path` returns an absolute path in the common
-    // git directory; only join when it is relative to the workspace.
-    const excludeAbsolute = isAbsolute(excludeFile)
-      ? excludeFile
-      : join(workspaceRoot, excludeFile);
-    let current = "";
-    try {
-      current = await readFile(excludeAbsolute, "utf8");
-    } catch {
-      current = "";
-    }
-
-    const present = new Set(current.split(/\r?\n/).map((line) => line.trim()));
-    const additions = safe
-      .map((path) => `/${path.split("\\").join("/")}`)
-      .filter((entry) => !present.has(entry));
-    if (additions.length === 0) return;
-
-    const prefix = current.length === 0 || current.endsWith("\n") ? "" : "\n";
-    await writeFile(excludeAbsolute, `${prefix}${additions.join("\n")}\n`, {
-      encoding: "utf8",
-      flag: "a",
-    });
-  } catch {
-    // A missing git dir or exclude file is not fatal; removeSeededPaths still
-    // deletes the seeded files before inspection.
-  }
-}
-
-/** Delete seeded paths from the workspace and prune emptied parent directories. */
 export async function removeSeededPaths(
   workspaceRoot: string,
   seededPaths: readonly string[],
@@ -110,33 +51,54 @@ export async function removeSeededPaths(
     ? workspaceRoot.slice(0, -1)
     : workspaceRoot;
 
+  let realRoot: string;
+  try {
+    realRoot = await realpath(normalizedRoot);
+  } catch {
+    return;
+  }
+
+  const warn = (message: string) =>
+    process.stderr.write(`[harness] ${message}\n`);
+
   for (const seededPath of seededPaths) {
     if (!isSafeRelativePath(seededPath)) {
-      process.stderr.write(
-        `[harness] refusing to remove unsafe seeded path: ${JSON.stringify(seededPath)}\n`,
+      warn(
+        `refusing to remove unsafe seeded path: ${JSON.stringify(seededPath)}`,
       );
       continue;
     }
 
-    const absolute = resolveInsideWorkspace(normalizedRoot, seededPath);
-    if (absolute === undefined) {
-      process.stderr.write(
-        `[harness] seeded path escapes the workspace, skipping: ${seededPath}\n`,
-      );
+    const target = resolve(realRoot, seededPath);
+
+    // Resolve the parent through any symlinks and confirm it is still inside
+    // the real workspace root, so a symlinked ancestor cannot redirect `rm`.
+    let realParent: string;
+    try {
+      realParent = await realpath(dirname(target));
+    } catch {
+      continue; // parent already gone
+    }
+    const relParent = relative(realRoot, realParent);
+    if (
+      relParent !== "" &&
+      (relParent === ".." ||
+        relParent.startsWith(`..${sep}`) ||
+        isAbsolute(relParent))
+    ) {
+      warn(`seeded path escapes the workspace, skipping: ${seededPath}`);
       continue;
     }
 
-    if (await isTrackedByGit(normalizedRoot, seededPath)) {
-      process.stderr.write(
-        `[harness] seeded path is tracked by git, leaving in place: ${seededPath}\n`,
-      );
+    if (await isTrackedByGit(realRoot, seededPath)) {
+      warn(`seeded path is tracked by git, leaving in place: ${seededPath}`);
       continue;
     }
 
-    await rm(absolute, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true });
 
-    let parent = dirname(absolute);
-    while (parent.length > normalizedRoot.length && parent !== normalizedRoot) {
+    let parent = dirname(target);
+    while (parent.length > realRoot.length && parent !== realRoot) {
       try {
         const entries = await readdir(parent);
         if (entries.length > 0) break;

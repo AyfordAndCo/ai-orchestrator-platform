@@ -9,7 +9,7 @@ import type {
   AgentHarnessTargetKind,
 } from "../../../../packages/domain/src/agent-harness/index.js";
 
-import { excludeSeededPaths, removeSeededPaths } from "./harness-workspace.js";
+import { removeSeededPaths } from "./harness-workspace.js";
 
 import {
   GitBoundaryError,
@@ -198,7 +198,6 @@ export async function executeRun(
         workspace: Object.freeze({ ...workspace }),
         targetKind: dependencies.harnessTargetKind ?? "codex",
       });
-      await excludeSeededPaths(workspace.workspacePath, harness.seededPaths);
     } catch (error) {
       return {
         run: failRun(

@@ -30,3 +30,12 @@ test("AgentHarnessProvisioningError carries a typed code", () => {
   assert.equal(error.code, "HARNESS_TARGET_UNSUPPORTED");
   assert.equal(error.message, "no provisioner for target");
 });
+
+test("the harness contract is reachable from the domain root entrypoint", async () => {
+  const domain = await import("../../dist/packages/domain/src/index.js");
+  assert.equal(typeof domain.AgentHarnessProvisioningError, "function");
+  assert.equal(
+    domain.agentHarnessErrorCodes.HARNESS_BUNDLE_UNAVAILABLE,
+    "HARNESS_BUNDLE_UNAVAILABLE",
+  );
+});
