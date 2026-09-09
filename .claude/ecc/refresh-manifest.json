@@ -49,7 +49,15 @@
     "scripts/lib/tmux-worktree-orchestrator.js",
     "scripts/orchestrate-codex-worker.sh",
     "scripts/orchestrate-worktrees.js",
-    "scripts/orchestration-status.js"
+    "scripts/orchestration-status.js",
+    "commands/multi-workflow.md",
+    "commands/epic-claim.md",
+    "commands/epic-decompose.md",
+    "commands/epic-publish.md",
+    "commands/epic-review.md",
+    "commands/epic-sync.md",
+    "commands/epic-unblock.md",
+    "commands/epic-validate.md"
   ],
   "note": "Generated bundle. Do not hand-edit. Run `pnpm ecc:refresh` to update."
 }

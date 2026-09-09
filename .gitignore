@@ -28,6 +28,7 @@ tmp/
 # Vendored ECC agent-harness bundle: keep the generated bundle, ignore
 # machine-local and runtime state (see docs/tooling/ecc.md)
 .claude/settings.json
+.claude/settings.json.bak
 .claude/settings.local.json
 .claude/ecc/install-state.json
 .claude/ecc/state/

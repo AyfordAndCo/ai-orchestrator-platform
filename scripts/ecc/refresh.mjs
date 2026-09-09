@@ -206,22 +206,50 @@ if (checkMode) {
   const tmpTarget = mkdtempSync(join(tmpdir(), "ecc-check-"));
   const tmpClaude = join(tmpTarget, ".claude");
   buildInto(tmpClaude);
-  let diff = "";
-  try {
-    run(
-      "git",
-      ["--no-pager", "diff", "--no-index", "--stat", claudeDir, tmpClaude],
-      { quiet: true },
-    );
-  } catch (error) {
-    diff = `${error.stdout ?? ""}`.trim() || "(differences found)";
+
+  // Compare only git-tracked files under `.claude/`, so a contributor's
+  // machine-local `.claude/settings.json` and ignored runtime state
+  // (logs/sessions/state) do not register as drift.
+  const tracked = run(
+    "git",
+    ["-C", repoRoot, "ls-files", "-z", "--", ".claude"],
+    { quiet: true },
+  )
+    .split("\0")
+    .filter((line) => line.length > 0);
+
+  const drift = [];
+  const seen = new Set();
+  for (const relFromRepo of tracked) {
+    const relFromClaude = relFromRepo.replace(/^\.claude\//, "");
+    seen.add(relFromClaude);
+    const committed = join(repoRoot, relFromRepo);
+    const rebuilt = join(tmpClaude, ...relFromClaude.split("/"));
+    if (!existsSync(rebuilt)) {
+      drift.push(`- removed upstream: ${relFromRepo}`);
+    } else if (!readFileSync(committed).equals(readFileSync(rebuilt))) {
+      drift.push(`- changed: ${relFromRepo}`);
+    }
   }
+
+  function walkNew(dir, prefix) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walkNew(join(dir, entry.name), rel);
+      } else if (!seen.has(rel)) {
+        drift.push(`- new upstream: .claude/${rel}`);
+      }
+    }
+  }
+  walkNew(tmpClaude, "");
+
   rmSync(tmpTarget, { recursive: true, force: true });
-  if (diff) {
+  if (drift.length > 0) {
     console.error(
       "[ecc] committed .claude/ is stale relative to ECC_REF; run `pnpm ecc:refresh`:",
     );
-    console.error(diff);
+    console.error(drift.join("\n"));
     process.exit(1);
   }
   console.log("[ecc] committed .claude/ matches ECC_REF");

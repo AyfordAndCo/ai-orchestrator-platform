@@ -74,13 +74,19 @@ export const KEEP_SKILLS = [
 
 /**
  * Paths to delete after install even though they arrive via a kept module:
- *   - `.agents/`, `.pi/`      — nested bundles for other harnesses (antigravity,
- *                               pi) emitted by `platform-configs`; redundant with
- *                               `.claude/agents` + `.claude/skills` and untrimmed.
- *   - `AGENTS.md`             — ECC's own agent instructions; the repository's
- *                               root `AGENTS.md` is authoritative here.
- *   - `skills/dmux-workflows` — dmux docs pulled in by `workflow-quality`.
- *   - `scripts/orchestrate-*` — tmux/dmux worktree runners.
+ *   - `.agents/`, `.pi/`       — nested bundles for other harnesses (antigravity,
+ *                                pi) emitted by `platform-configs`; redundant
+ *                                with `.claude/agents` + `.claude/skills`.
+ *   - `AGENTS.md`              — ECC's own agent instructions; the repository's
+ *                                root `AGENTS.md` is authoritative here.
+ *   - `skills/dmux-workflows`  — dmux docs pulled in by `workflow-quality`.
+ *   - `scripts/orchestrate-*`  — tmux/dmux worktree runners.
+ *   - `commands/multi-workflow`,
+ *     `commands/epic-*`        — command shims whose documented entrypoints
+ *                                (`scripts/orchestrate-worktrees.js`,
+ *                                `scripts/github-coordination.js`) are not part
+ *                                of this trimmed bundle, so the shims would fail
+ *                                with MODULE_NOT_FOUND.
  */
 export const DROP_PATHS = [
   ".agents",
@@ -92,6 +98,14 @@ export const DROP_PATHS = [
   "scripts/orchestrate-codex-worker.sh",
   "scripts/orchestrate-worktrees.js",
   "scripts/orchestration-status.js",
+  "commands/multi-workflow.md",
+  "commands/epic-claim.md",
+  "commands/epic-decompose.md",
+  "commands/epic-publish.md",
+  "commands/epic-review.md",
+  "commands/epic-sync.md",
+  "commands/epic-unblock.md",
+  "commands/epic-validate.md",
 ];
 
 /**
