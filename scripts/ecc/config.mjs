@@ -82,11 +82,15 @@ export const KEEP_SKILLS = [
  *   - `skills/dmux-workflows`  — dmux docs pulled in by `workflow-quality`.
  *   - `scripts/orchestrate-*`  — tmux/dmux worktree runners.
  *   - `commands/multi-workflow`,
- *     `commands/epic-*`        — command shims whose documented entrypoints
+ *     `commands/epic-*`,
+ *     `commands/project-init`,
+ *     `commands/plan-canvas`   — command shims whose documented entrypoints
  *                                (`scripts/orchestrate-worktrees.js`,
- *                                `scripts/github-coordination.js`) are not part
- *                                of this trimmed bundle, so the shims would fail
- *                                with MODULE_NOT_FOUND.
+ *                                `scripts/github-coordination.js`,
+ *                                `scripts/install-apply.js`,
+ *                                `scripts/plan-canvas.js`) are not part of this
+ *                                trimmed bundle, so the shims would fail with
+ *                                MODULE_NOT_FOUND.
  */
 export const DROP_PATHS = [
   ".agents",
@@ -106,6 +110,8 @@ export const DROP_PATHS = [
   "commands/epic-sync.md",
   "commands/epic-unblock.md",
   "commands/epic-validate.md",
+  "commands/project-init.md",
+  "commands/plan-canvas.md",
 ];
 
 /**

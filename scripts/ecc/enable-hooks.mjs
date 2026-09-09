@@ -50,54 +50,89 @@ function backup() {
   if (existsSync(settingsPath)) copyFileSync(settingsPath, backupPath);
 }
 
+/** Every `id` that appears in an ECC `hooks` block, per event. */
+function eccHookIds(hooks) {
+  const ids = new Set();
+  for (const groups of Object.values(hooks ?? {})) {
+    for (const group of groups ?? []) {
+      if (typeof group?.id === "string") ids.add(group.id);
+    }
+  }
+  return ids;
+}
+
+function readExampleHooks() {
+  if (!existsSync(examplePath)) {
+    console.error(
+      "[ecc] .claude/settings.example.json not found; run `pnpm ecc:refresh` first",
+    );
+    process.exit(1);
+  }
+  const placeholderB64 = Buffer.from(CLAUDE_ROOT_PLACEHOLDER, "utf8").toString(
+    "base64",
+  );
+  const localB64 = Buffer.from(claudeDir, "utf8").toString("base64");
+  return JSON.parse(
+    readFileSync(examplePath, "utf8")
+      .split(placeholderB64)
+      .join(localB64)
+      .split(CLAUDE_ROOT_PLACEHOLDER)
+      .join(claudeDir.split("\\").join("\\\\")),
+  );
+}
+
 if (process.argv.includes("--disable")) {
   if (!existsSync(settingsPath)) {
     console.log("[ecc] no .claude/settings.json; nothing to disable");
     process.exit(0);
   }
+  const eccIds = eccHookIds(readExampleHooks().hooks);
   backup();
   const current = readJson(settingsPath);
-  delete current.hooks;
+  const userHooks = {};
+  for (const [event, groups] of Object.entries(current.hooks ?? {})) {
+    const kept = (groups ?? []).filter((group) => !eccIds.has(group?.id));
+    if (kept.length > 0) userHooks[event] = kept;
+  }
+  if (Object.keys(userHooks).length > 0) current.hooks = userHooks;
+  else delete current.hooks;
+
   const remaining = Object.keys(current);
   if (
     remaining.length === 0 ||
     (remaining.length === 1 && current.includeCoAuthoredBy !== undefined)
   ) {
     rmSync(settingsPath, { force: true });
-    console.log("[ecc] removed .claude/settings.json (was ECC-only)");
+    console.log("[ecc] removed .claude/settings.json (nothing left but ECC)");
   } else {
     writeJson(settingsPath, current);
-    console.log(
-      "[ecc] removed the ECC `hooks` block; kept your other settings",
-    );
+    console.log("[ecc] removed ECC hook entries; kept your own hooks/settings");
   }
   console.log(`[ecc] previous file saved to ${backupPath}`);
   process.exit(0);
 }
 
-if (!existsSync(examplePath)) {
-  console.error(
-    "[ecc] .claude/settings.example.json not found; run `pnpm ecc:refresh` first",
-  );
-  process.exit(1);
-}
-
-const placeholderB64 = Buffer.from(CLAUDE_ROOT_PLACEHOLDER, "utf8").toString(
-  "base64",
-);
-const localB64 = Buffer.from(claudeDir, "utf8").toString("base64");
-
-const localizedExample = JSON.parse(
-  readFileSync(examplePath, "utf8")
-    .split(placeholderB64)
-    .join(localB64)
-    .split(CLAUDE_ROOT_PLACEHOLDER)
-    .join(claudeDir.split("\\").join("\\\\")),
-);
+const localizedExample = readExampleHooks();
+const eccIds = eccHookIds(localizedExample.hooks);
 
 const merged = existsSync(settingsPath) ? readJson(settingsPath) : {};
 backup();
-merged.hooks = localizedExample.hooks;
+
+// Merge per event: keep the user's groups whose id is not ECC-owned, then
+// append the ECC groups. Never discard a user hook.
+const mergedHooks = {};
+const events = new Set([
+  ...Object.keys(merged.hooks ?? {}),
+  ...Object.keys(localizedExample.hooks ?? {}),
+]);
+for (const event of events) {
+  const userGroups = (merged.hooks?.[event] ?? []).filter(
+    (group) => !eccIds.has(group?.id),
+  );
+  const eccGroups = localizedExample.hooks?.[event] ?? [];
+  mergedHooks[event] = [...userGroups, ...eccGroups];
+}
+merged.hooks = mergedHooks;
 if (
   merged.includeCoAuthoredBy === undefined &&
   localizedExample.includeCoAuthoredBy !== undefined

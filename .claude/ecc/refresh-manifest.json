@@ -57,7 +57,9 @@
     "commands/epic-review.md",
     "commands/epic-sync.md",
     "commands/epic-unblock.md",
-    "commands/epic-validate.md"
+    "commands/epic-validate.md",
+    "commands/project-init.md",
+    "commands/plan-canvas.md"
   ],
   "note": "Generated bundle. Do not hand-edit. Run `pnpm ecc:refresh` to update."
 }
