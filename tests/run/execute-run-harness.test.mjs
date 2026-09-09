@@ -11,6 +11,7 @@ import {
   executeRun,
   executionFailureCodes,
 } from "../../dist/apps/orchestrator-worker/src/run/index.js";
+import { removeSeededPaths } from "../../dist/apps/orchestrator-worker/src/run/harness-workspace.js";
 
 function createClock(values) {
   let index = 0;
@@ -206,5 +207,63 @@ test("fails the run when harness provisioning throws and skips execution", async
     assert.equal(result.workspace.workspacePath, workspacePath);
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("removeSeededPaths ignores unsafe, escaping, and git-tracked paths", async () => {
+  const workspacePath = initWorkspace();
+  try {
+    execFileSync("git", ["-C", workspacePath, "config", "user.email", "t@t"], {
+      windowsHide: true,
+    });
+    execFileSync("git", ["-C", workspacePath, "config", "user.name", "t"], {
+      windowsHide: true,
+    });
+
+    // A tracked file that must survive cleanup.
+    await writeFile(
+      join(workspacePath, "AGENTS.md"),
+      "real repo file\n",
+      "utf8",
+    );
+    execFileSync("git", ["-C", workspacePath, "add", "AGENTS.md"], {
+      windowsHide: true,
+    });
+    execFileSync("git", ["-C", workspacePath, "commit", "-qm", "seed"], {
+      windowsHide: true,
+    });
+
+    // An untracked sibling outside the workspace that must not be touched.
+    const outside = join(workspacePath, "..", "outside-sentinel.txt");
+    await writeFile(outside, "keep me\n", "utf8");
+
+    // A legitimately seeded untracked path that should be removed.
+    await mkdir(join(workspacePath, ".ecc-harness"), { recursive: true });
+    await writeFile(
+      join(workspacePath, ".ecc-harness", "skill.md"),
+      "seeded\n",
+      "utf8",
+    );
+
+    await removeSeededPaths(workspacePath, [
+      "AGENTS.md", // tracked -> keep
+      "../outside-sentinel.txt", // escapes -> skip
+      "", // empty -> skip
+      ".ecc-harness", // safe untracked -> remove
+    ]);
+
+    assert.ok(
+      existsSync(join(workspacePath, "AGENTS.md")),
+      "tracked file kept",
+    );
+    assert.ok(existsSync(outside), "escaping path untouched");
+    assert.equal(
+      existsSync(join(workspacePath, ".ecc-harness")),
+      false,
+      "safe seeded path removed",
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+    rmSync(join(workspacePath, "..", "outside-sentinel.txt"), { force: true });
   }
 });
