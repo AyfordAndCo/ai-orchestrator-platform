@@ -265,11 +265,12 @@ export class EccHarnessProvisioner implements AgentHarnessProvisioner {
     }
 
     // Build the whole bundle in a staging directory next to the target, then
-    // swap it in with a single rename. A copy that fails part-way leaves only
-    // the staging directory, which is removed here, so the workspace never ends
-    // up with a partial `SEED_DIR` that a later retry would reject.
-    const staging = await mkdtemp(join(workspaceRoot, `${SEED_DIR}.staging-`));
+    // swap it in with a single rename. A failure anywhere below leaves only the
+    // staging directory, which is removed here, so the workspace never ends up
+    // with a partial `SEED_DIR` that a later retry would reject.
+    let staging: string | undefined;
     try {
+      staging = await mkdtemp(join(workspaceRoot, `${SEED_DIR}.staging-`));
       for (const subtree of BUNDLE_SUBTREES) {
         const from = join(realBundleRoot, subtree);
         try {
@@ -288,7 +289,9 @@ export class EccHarnessProvisioner implements AgentHarnessProvisioner {
       await rm(seedRoot, { recursive: true, force: true });
       await rename(staging, seedRoot);
     } catch (error) {
-      await rm(staging, { recursive: true, force: true }).catch(() => {});
+      if (staging !== undefined) {
+        await rm(staging, { recursive: true, force: true }).catch(() => {});
+      }
       if (error instanceof AgentHarnessProvisioningError) throw error;
       throw new AgentHarnessProvisioningError(
         agentHarnessErrorCodes.HARNESS_WRITE_FAILED,
