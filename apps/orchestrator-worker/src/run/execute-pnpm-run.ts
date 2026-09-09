@@ -27,8 +27,6 @@ import {
   type EccHarnessProvisionerOptions,
 } from "../../../../packages/integrations/src/agent-harness/index.js";
 
-import type { AgentHarnessTargetKind } from "../../../../packages/domain/src/agent-harness/index.js";
-
 import {
   PnpmWorkspaceValidator,
   type PnpmWorkspaceValidatorOptions,
@@ -46,11 +44,10 @@ export interface ExecutePnpmRunDependencies {
   readonly agentExecution: CodexCliAgentExecutorOptions;
   /**
    * When provided, the vendored ECC bundle is seeded into each agent workspace
-   * before execution. `targetKind` defaults to `"codex"` to match the executor.
+   * before execution. This boundary always runs the Codex executor, so the
+   * harness is provisioned for the `"codex"` target.
    */
-  readonly agentHarness?: EccHarnessProvisionerOptions & {
-    readonly targetKind?: AgentHarnessTargetKind;
-  };
+  readonly agentHarness?: EccHarnessProvisionerOptions;
   readonly validation?: PnpmWorkspaceValidatorOptions;
   readonly validator?: WorkspaceValidator;
   readonly gitPublication?: GitChangePublisherOptions;
@@ -72,7 +69,6 @@ export async function executePnpmRun(
     dependencies.agentHarness === undefined
       ? undefined
       : new EccHarnessProvisioner(dependencies.agentHarness);
-  const harnessTargetKind = dependencies.agentHarness?.targetKind ?? "codex";
 
   const validator =
     dependencies.validator ??
@@ -108,7 +104,7 @@ export async function executePnpmRun(
     gitPublisher,
     ...(harnessProvisioner === undefined
       ? {}
-      : { harnessProvisioner, harnessTargetKind }),
+      : { harnessProvisioner, harnessTargetKind: "codex" as const }),
     ...(pullRequestPublisher === undefined ? {} : { pullRequestPublisher }),
     ...(ciObserver === undefined ? {} : { ciObserver }),
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),

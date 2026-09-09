@@ -298,3 +298,71 @@ test("constructor requires absolute paths", () => {
     RangeError,
   );
 });
+
+test("rejects a pre-existing .ecc-harness without our marker", async () => {
+  const fixture = await createFixture();
+  try {
+    await mkdir(join(fixture.workspacePath, ".ecc-harness", "user-stuff"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(fixture.workspacePath, ".ecc-harness", "user-stuff", "keep.md"),
+      "real work\n",
+    );
+    const provisioner = new EccHarnessProvisioner({
+      bundleRoot: fixture.bundleRoot,
+      allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+    });
+
+    await assert.rejects(
+      provisioner.provision(request(fixture.workspacePath, "codex")),
+      (error) => {
+        assert.equal(
+          error.code,
+          agentHarnessErrorCodes.HARNESS_WORKSPACE_REJECTED,
+        );
+        return true;
+      },
+    );
+    assert.ok(
+      existsSync(
+        join(fixture.workspacePath, ".ecc-harness", "user-stuff", "keep.md"),
+      ),
+      "pre-existing content must be untouched",
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("refuses a bundle that contains a symbolic link", async () => {
+  if (process.platform === "win32") return; // symlink creation restricted here
+
+  const fixture = await createFixture();
+  try {
+    await symlink(
+      "/etc/hosts",
+      join(fixture.bundleRoot, "skills", "evil-link"),
+      "file",
+    );
+    const provisioner = new EccHarnessProvisioner({
+      bundleRoot: fixture.bundleRoot,
+      allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+    });
+
+    await assert.rejects(
+      provisioner.provision(request(fixture.workspacePath, "codex")),
+      (error) => {
+        assert.equal(error.code, agentHarnessErrorCodes.HARNESS_WRITE_FAILED);
+        return true;
+      },
+    );
+    assert.equal(
+      existsSync(join(fixture.workspacePath, ".ecc-harness")),
+      false,
+      "nothing is seeded when the bundle is rejected",
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
