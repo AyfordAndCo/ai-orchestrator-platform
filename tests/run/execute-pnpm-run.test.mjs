@@ -191,6 +191,7 @@ process.exit(
     workspacePath,
     binPath,
     homePath,
+    homeRoot: join(rootPath, "codex-home-root"),
     codexPath,
     pnpmPath,
     pnpmScriptPath,
@@ -316,6 +317,7 @@ process.stdout.write(
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+            homeRoot: fixture.homeRoot,
           },
         },
       ),
@@ -381,6 +383,7 @@ process.exit(9);
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+            homeRoot: fixture.homeRoot,
           },
         },
       ),
@@ -441,6 +444,7 @@ await writeFile(
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+            homeRoot: fixture.homeRoot,
           },
         },
       ),
@@ -503,6 +507,7 @@ process.stdout.write("worker-validation-ok");
           agentExecution: {
             executablePath: fixture.codexPath,
             allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+            homeRoot: fixture.homeRoot,
           },
           pullRequestPublisher: {
             async publish(request) {

@@ -1,6 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstat, readFile, readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 import {
@@ -10,12 +11,65 @@ import {
   type WorkspaceValidator,
 } from "../../../domain/src/validation/index.js";
 import type { Workspace } from "../../../domain/src/workspace/index.js";
-import type { ValidationContainerOptions } from "./pnpm-workspace-validator.js";
+import {
+  resolveExecutableCandidate,
+  type ValidationContainerOptions,
+} from "./pnpm-workspace-validator.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const ALLOWED_MANAGERS = new Set(["pnpm", "npm", "yarn", "bun"]);
 const execFileAsync = promisify(execFile);
+
+let cachedDefaultGitExecutablePath: string | undefined;
+
+/**
+ * Resolves an absolute default git executable path via PATH once, then
+ * caches it. readHead() below runs with `cwd` set to the (agent-controlled)
+ * workspace being validated, and a bare command name is searched relative
+ * to cwd on Windows by default (before PATH is even considered), and on
+ * POSIX too if PATH contains a relative entry - so a candidate commit could
+ * otherwise plant an executable literally named "git" in the workspace and
+ * have it run with host privileges during this integrity check. Resolving
+ * to an absolute path up front bypasses that search entirely - the same
+ * fix PnpmWorkspaceValidator already applies for the identical risk.
+ */
+function resolveDefaultGitExecutablePath(): string {
+  if (cachedDefaultGitExecutablePath !== undefined) {
+    return cachedDefaultGitExecutablePath;
+  }
+  const finder = process.platform === "win32" ? "where" : "which";
+  let resolved: string | undefined;
+  try {
+    const stdout = execFileSync(finder, ["git"], { encoding: "utf8" });
+    resolved = stdout.split(/\r?\n/)[0]?.trim();
+  } catch (error) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+      { cause: error },
+    );
+  }
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+    );
+  }
+  // `where`/`which` can print a *relative* match when PATH itself contains a
+  // relative entry (e.g. "." or "bin") - relative to the directory this
+  // process was launched from, which is still safe at this exact point (no
+  // workspace-specific cwd has been entered yet). But the result is cached
+  // and reused later by readHead() with `cwd` set to the agent-controlled
+  // workspace being validated, so a relative path would then resolve
+  // against the *wrong* directory - one an agent controls. Resolving it to
+  // absolute now, against the lookup-time cwd, closes that gap - the same
+  // fix PnpmWorkspaceValidator's identical helper applies, reused directly
+  // here rather than duplicated.
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
+  cachedDefaultGitExecutablePath = resolved;
+  return resolved;
+}
 
 export type ValidationRuntime = "npm" | "pnpm" | "yarn" | "bun" | "dotnet";
 
@@ -72,6 +126,8 @@ export interface RepositoryCommandValidatorOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly command?: readonly [string, ...string[]];
   readonly verifyCandidateCommit?: boolean;
+  /** Must be absolute if provided; defaults to an absolute path resolved via PATH. */
+  readonly gitExecutablePath?: string;
   readonly container?: ValidationContainerOptions;
   /**
    * Pinned images for runtimes not covered by `container.image` (the
@@ -205,9 +261,12 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function readHead(workspacePath: string): Promise<string> {
+async function readHead(
+  gitExecutablePath: string,
+  workspacePath: string,
+): Promise<string> {
   const { stdout } = await execFileAsync(
-    "git",
+    gitExecutablePath,
     ["rev-parse", "--verify", "HEAD"],
     { cwd: workspacePath, encoding: "utf8" },
   );
@@ -237,17 +296,28 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
   readonly #options: Required<
     Pick<
       RepositoryCommandValidatorOptions,
-      "timeoutMs" | "maxOutputBytes" | "verifyCandidateCommit"
+      | "timeoutMs"
+      | "maxOutputBytes"
+      | "verifyCandidateCommit"
+      | "gitExecutablePath"
     >
   > &
     RepositoryCommandValidatorOptions;
 
   constructor(options: RepositoryCommandValidatorOptions = {}) {
+    if (
+      options.gitExecutablePath !== undefined &&
+      !isAbsolute(options.gitExecutablePath)
+    ) {
+      throw new RangeError("gitExecutablePath must be absolute");
+    }
     this.#options = {
       ...options,
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       verifyCandidateCommit: options.verifyCandidateCommit ?? true,
+      gitExecutablePath:
+        options.gitExecutablePath ?? resolveDefaultGitExecutablePath(),
     };
     if (
       !Number.isInteger(this.#options.timeoutMs) ||
@@ -318,7 +388,12 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
       candidateCommitSha !== undefined
     ) {
       try {
-        if ((await readHead(workspace.workspacePath)) !== candidateCommitSha) {
+        if (
+          (await readHead(
+            this.#options.gitExecutablePath,
+            workspace.workspacePath,
+          )) !== candidateCommitSha
+        ) {
           throw new Error("workspace HEAD mismatch");
         }
       } catch (error) {
@@ -397,7 +472,10 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
           ) {
             try {
               if (
-                (await readHead(workspace.workspacePath)) !== candidateCommitSha
+                (await readHead(
+                  this.#options.gitExecutablePath,
+                  workspace.workspacePath,
+                )) !== candidateCommitSha
               ) {
                 integrityFailure = new WorkspaceValidationError(
                   validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,
@@ -443,7 +521,10 @@ export class RepositoryCommandValidator implements WorkspaceValidator {
     if (
       this.#options.verifyCandidateCommit &&
       candidateCommitSha !== undefined &&
-      (await readHead(workspace.workspacePath)) !== candidateCommitSha
+      (await readHead(
+        this.#options.gitExecutablePath,
+        workspace.workspacePath,
+      )) !== candidateCommitSha
     ) {
       throw new WorkspaceValidationError(
         validationErrorCodes.CANDIDATE_INTEGRITY_FAILED,

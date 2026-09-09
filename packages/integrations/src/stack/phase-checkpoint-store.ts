@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import {
   StalePhaseCheckpointError,
@@ -38,7 +38,7 @@ export class JsonPhaseCheckpointStore implements PhaseCheckpointStore {
   readonly #filePath: string;
 
   constructor(filePath: string) {
-    if (!filePath.startsWith("/")) {
+    if (!isAbsolute(filePath)) {
       throw new RangeError("filePath must be absolute");
     }
     this.#filePath = filePath;
@@ -60,7 +60,7 @@ export class JsonPhaseCheckpointStore implements PhaseCheckpointStore {
     await mkdir(dirname(this.#filePath), { recursive: true });
     const temporaryPath = join(
       dirname(this.#filePath),
-      `.${this.#filePath.split("/").pop() ?? "checkpoints"}.${process.pid}.tmp`,
+      `.${basename(this.#filePath)}.${process.pid}.tmp`,
     );
     await writeFile(temporaryPath, `${JSON.stringify(document)}\n`, "utf8");
     await rename(temporaryPath, this.#filePath);

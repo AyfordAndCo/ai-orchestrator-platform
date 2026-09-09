@@ -1,6 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 import {
@@ -15,8 +16,109 @@ import type { Workspace } from "../../../domain/src/workspace/index.js";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
-const DEFAULT_GIT_EXECUTABLE_PATH = "/usr/bin/git";
 const execFileAsync = promisify(execFile);
+
+/**
+ * `where`/`which` can print a *relative* match when PATH itself contains a
+ * relative entry (e.g. "." or "bin") - relative to the directory the finder
+ * process was launched from. That's still safe to resolve at lookup time
+ * (no workspace-specific cwd has been entered yet), but the result is
+ * cached and reused later with `cwd` set to the agent-controlled workspace
+ * being validated - so a relative path would then resolve against the
+ * *wrong*, agent-controlled directory instead. Exported for direct testing,
+ * since real `where`/`which` output can't be forced to be relative from a
+ * test without mutating the process's real PATH.
+ */
+export function resolveExecutableCandidate(
+  candidate: string,
+  lookupCwd: string,
+): string {
+  return isAbsolute(candidate) ? candidate : resolve(lookupCwd, candidate);
+}
+
+let cachedDefaultGitExecutablePath: string | undefined;
+
+/**
+ * Resolves an absolute default git executable path via PATH once, then
+ * caches it. This can't be a plain bare "git" string the way
+ * GitWorkspaceProvisioner's default is: readHead() below runs with `cwd`
+ * set to the (agent-controlled) workspace being validated, and a bare
+ * command name is searched relative to `cwd` on Windows by default (before
+ * PATH is even considered) and can be on POSIX too if PATH contains a
+ * relative entry like "."). Either way, a candidate commit could plant an
+ * executable literally named "git" in the workspace and have it run with
+ * host privileges during this integrity check. Resolving to an absolute
+ * path up front bypasses that search entirely.
+ */
+function resolveDefaultGitExecutablePath(): string {
+  if (cachedDefaultGitExecutablePath !== undefined) {
+    return cachedDefaultGitExecutablePath;
+  }
+  const finder = process.platform === "win32" ? "where" : "which";
+  let resolved: string | undefined;
+  try {
+    const stdout = execFileSync(finder, ["git"], { encoding: "utf8" });
+    resolved = stdout.split(/\r?\n/)[0]?.trim();
+  } catch (error) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+      { cause: error },
+    );
+  }
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error(
+      "Unable to resolve an absolute git executable on PATH; pass " +
+        "gitExecutablePath explicitly.",
+    );
+  }
+  // `where`/`which` can print a *relative* match when PATH itself contains a
+  // relative entry (e.g. "." or "bin") - relative to the directory this
+  // process was launched from, which is still safe at this exact point (no
+  // workspace-specific cwd has been entered yet). But the result is cached
+  // and reused later by readHead() with `cwd` set to the agent-controlled
+  // workspace being validated, so a relative path would then resolve
+  // against the *wrong* directory - one an agent controls. Resolving it to
+  // absolute now, against the lookup-time cwd, closes that gap.
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
+  cachedDefaultGitExecutablePath = resolved;
+  return resolved;
+}
+
+let cachedDefaultPnpmExecutablePath: string | undefined;
+
+/**
+ * Resolves an absolute pnpm executable via PATH once, then caches it. The
+ * unsandboxed Windows fallback below launches "pnpm validate" through
+ * cmd.exe (shell: true) because pnpm is normally a .cmd shim; cmd.exe's own
+ * command search checks the current directory - here, the agent-controlled
+ * workspace being validated - before PATH, so an agent-planted pnpm.cmd
+ * would otherwise run with this process's host privileges instead of the
+ * real pnpm. Resolving to an absolute path up front and invoking that
+ * directly bypasses the search entirely, the same fix applied to git
+ * above.
+ */
+function resolveDefaultPnpmExecutablePath(): string {
+  if (cachedDefaultPnpmExecutablePath !== undefined) {
+    return cachedDefaultPnpmExecutablePath;
+  }
+  const finder = process.platform === "win32" ? "where" : "which";
+  let resolved: string | undefined;
+  try {
+    const stdout = execFileSync(finder, ["pnpm"], { encoding: "utf8" });
+    resolved = stdout.split(/\r?\n/)[0]?.trim();
+  } catch (error) {
+    throw new Error("Unable to resolve an absolute pnpm executable on PATH.", {
+      cause: error,
+    });
+  }
+  if (resolved === undefined || resolved.length === 0) {
+    throw new Error("Unable to resolve an absolute pnpm executable on PATH.");
+  }
+  resolved = resolveExecutableCandidate(resolved, process.cwd());
+  cachedDefaultPnpmExecutablePath = resolved;
+  return resolved;
+}
 
 export interface PnpmWorkspaceValidatorOptions {
   readonly timeoutMs?: number;
@@ -27,6 +129,7 @@ export interface PnpmWorkspaceValidatorOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly sandbox?: ValidationSandboxOptions;
   readonly container?: ValidationContainerOptions;
+  readonly spawnImplementation?: typeof spawn;
 }
 
 export interface ValidationSandboxOptions {
@@ -76,6 +179,17 @@ function sanitizeOutput(value: string): string {
     );
 }
 
+// On Windows, pnpm is normally a .cmd shim, and launching one - even with
+// shell:false - makes Node hand off to cmd.exe internally, which needs
+// SystemRoot/ComSpec/PATHEXT to run at all (Windows itself, not just pnpm,
+// relies on %SystemRoot% to resolve its own system DLLs). These are plumbing
+// needed to spawn anything on Windows, not secrets, so allow-listing them
+// only on win32 doesn't loosen what the POSIX CI path already allows.
+const WINDOWS_ALLOWED_ENVIRONMENT_KEYS =
+  process.platform === "win32"
+    ? ["ComSpec", "PATHEXT", "SystemRoot", "TEMP", "TMP", "USERPROFILE"]
+    : [];
+
 function validationEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv {
@@ -90,6 +204,7 @@ function validationEnvironment(
     "PNPM_HOME",
     "TMPDIR",
     "USER",
+    ...WINDOWS_ALLOWED_ENVIRONMENT_KEYS,
   ];
   return Object.fromEntries(
     allowed.flatMap((name) =>
@@ -135,9 +250,10 @@ function createValidationProcess(
   sandbox: ValidationSandboxOptions | undefined,
   container: ValidationContainerOptions | undefined,
   environment: NodeJS.ProcessEnv | undefined,
+  spawnImplementation: typeof spawn,
 ) {
   if (container !== undefined) {
-    return spawn(
+    return spawnImplementation(
       container.executablePath,
       [
         "run",
@@ -182,7 +298,7 @@ function createValidationProcess(
     const pnpmExecPath = (environment ?? process.env).npm_execpath;
 
     if (pnpmExecPath !== undefined && pnpmExecPath.trim().length > 0) {
-      return spawn(process.execPath, [pnpmExecPath, "validate"], {
+      return spawnImplementation(process.execPath, [pnpmExecPath, "validate"], {
         cwd: workspacePath,
         shell: false,
         env: validationEnvironment(environment),
@@ -191,16 +307,40 @@ function createValidationProcess(
       });
     }
 
-    return spawn("pnpm", ["validate"], {
-      cwd: workspacePath,
-      shell: false,
-      env: validationEnvironment(environment),
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // pnpm is normally a .cmd shim on Windows, and Windows's CreateProcess
+    // (unlike a shell) won't resolve a bare command through PATHEXT to find
+    // it when shell is false - it only tries appending .exe - so this uses
+    // shell: true to get PATHEXT resolution. That alone isn't enough,
+    // though: cmd.exe's own command search checks the current directory
+    // (workspacePath, agent-controlled) before PATH, so a literal "pnpm"
+    // would let an agent-planted pnpm.cmd run instead of the real one with
+    // this process's host privileges. Resolving pnpm to an absolute path
+    // first and passing shell that directly closes that gap - the command
+    // line is still a fixed literal with nothing untrusted interpolated
+    // into it, and passing it as one string (rather than a command plus an
+    // args array) is what avoids Node's shell-plus-args deprecation warning
+    // (DEP0190).
+    return process.platform === "win32"
+      ? spawnImplementation(
+          `"${resolveDefaultPnpmExecutablePath()}" validate`,
+          {
+            cwd: workspacePath,
+            shell: true,
+            env: validationEnvironment(environment),
+            detached: false,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        )
+      : spawnImplementation("pnpm", ["validate"], {
+          cwd: workspacePath,
+          shell: false,
+          env: validationEnvironment(environment),
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
   }
 
-  return spawn(
+  return spawnImplementation(
     sandbox.executablePath,
     [
       "--die-with-parent",
@@ -296,6 +436,24 @@ function terminateValidationProcess(
     }
   }
 
+  if (process.platform === "win32") {
+    // The bare-"pnpm" fallback path spawns through cmd.exe (see
+    // createValidationProcess) so it can resolve a .cmd shim, which makes
+    // `child` the cmd.exe wrapper, not the actual validator process it
+    // launches. child.kill() only terminates that wrapper - the real
+    // grandchild process (and its held stdout/stderr pipe handles) survives,
+    // so `close` never fires and the caller hangs past the timeout.
+    // taskkill /T kills the whole process tree instead.
+    try {
+      execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+      return;
+    } catch {
+      // Fall through to a best-effort child.kill() below.
+    }
+  }
+
   try {
     child.kill(signal);
   } catch {
@@ -343,8 +501,10 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
   readonly #environment: NodeJS.ProcessEnv | undefined;
   readonly #sandbox: ValidationSandboxOptions | undefined;
   readonly #container: ValidationContainerOptions | undefined;
+  readonly #spawn: typeof spawn;
 
   constructor(options: PnpmWorkspaceValidatorOptions = {}) {
+    this.#spawn = options.spawnImplementation ?? spawn;
     this.#timeoutMs = requirePositiveInteger(
       "timeoutMs",
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -361,8 +521,11 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
     );
 
     this.#gitExecutablePath =
-      options.gitExecutablePath ?? DEFAULT_GIT_EXECUTABLE_PATH;
-    if (!isAbsolute(this.#gitExecutablePath)) {
+      options.gitExecutablePath ?? resolveDefaultGitExecutablePath();
+    if (
+      options.gitExecutablePath !== undefined &&
+      !isAbsolute(options.gitExecutablePath)
+    ) {
       throw new RangeError("gitExecutablePath must be absolute");
     }
     this.#verifyCandidateCommit = options.verifyCandidateCommit ?? true;
@@ -488,6 +651,7 @@ export class PnpmWorkspaceValidator implements WorkspaceValidator {
           this.#sandbox,
           this.#container,
           this.#environment,
+          this.#spawn,
         );
       } catch (error) {
         reject(

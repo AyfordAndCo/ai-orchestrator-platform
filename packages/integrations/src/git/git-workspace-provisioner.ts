@@ -16,6 +16,21 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+// Deliberately the fully ambient environment everywhere in this file, with
+// no git config isolation: this class fetches before anything
+// agent-controlled has run, so it needs the operator's real authentication
+// setup - most commonly a global or system `credential.helper` (Git
+// Credential Manager, osxkeychain, etc.) - to succeed against a private
+// remote at all. An earlier version isolated global/system config here to
+// guard against a `url.*.insteadOf` rewrite diverging from what callers'
+// preflight checks approve, but that isolation also silently discarded
+// those credential helpers for every caller, breaking normal authenticated
+// fetches. The rewrite-divergence risk is now caught instead by callers
+// comparing an isolated read of the origin URL against this class's own
+// ambient resolution (see run-repository-issue.ts's
+// assertNoAmbientOriginRewrite) and failing closed on any mismatch, rather
+// than by discarding credentials here.
+
 interface CommandFailure extends Error {
   code?: number | string;
   stdout?: string;
