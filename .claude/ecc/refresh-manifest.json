@@ -1,0 +1,56 @@
+{
+  "generatedBy": "scripts/ecc/refresh.mjs",
+  "source": {
+    "repo": "https://github.com/allanayford-dev/ECC.git",
+    "ref": "5064474d4d762dc9640234a41617cccb79185cec",
+    "repoVersion": "2.2.1"
+  },
+  "modules": [
+    "rules-core",
+    "agents-core",
+    "commands-core",
+    "hooks-runtime",
+    "platform-configs",
+    "workflow-quality",
+    "database",
+    "skill-unified-memory"
+  ],
+  "keepRuleLangs": [
+    "common",
+    "typescript"
+  ],
+  "curatedSkills": [
+    "api-design",
+    "backend-patterns",
+    "coding-standards",
+    "contract-first",
+    "hexagonal-architecture",
+    "mcp-server-patterns",
+    "nestjs-patterns",
+    "nextjs-turbopack",
+    "vite-patterns",
+    "bun-runtime",
+    "react-patterns",
+    "react-performance",
+    "react-testing",
+    "frontend-patterns",
+    "frontend-design-direction",
+    "frontend-a11y",
+    "accessibility",
+    "design-system",
+    "make-interfaces-feel-better"
+  ],
+  "droppedPaths": [
+    ".agents",
+    ".pi",
+    "AGENTS.md",
+    "commands",
+    "skills/dmux-workflows",
+    "scripts/lib/orchestration-session.js",
+    "scripts/lib/tmux-worktree-orchestrator.js",
+    "scripts/orchestrate-codex-worker.sh",
+    "scripts/orchestrate-worktrees.js",
+    "scripts/orchestration-status.js"
+  ],
+  "note": "Generated bundle. Do not hand-edit. Run `pnpm ecc:refresh` to update."
+}

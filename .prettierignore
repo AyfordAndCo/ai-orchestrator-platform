@@ -2,3 +2,6 @@ node_modules
 dist
 coverage
 pnpm-lock.yaml
+
+# Vendored ECC agent-harness bundle (generated; see docs/tooling/ecc.md)
+.claude/

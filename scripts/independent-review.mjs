@@ -24,9 +24,20 @@ if (!providerName || !modelName) {
   throw new Error("REVIEW_PROVIDER and REVIEW_MODEL are required");
 }
 
+// Exclude the vendored ECC bundle under `.claude/`: it is generated,
+// SHA-pinned third-party content (already excluded from lint/format and
+// reproduced by `pnpm ecc:refresh:check`), not authored code, and its ~500
+// files would push the review prompt past the model context window.
 const diff = execFileSync(
   "git",
-  ["diff", "--no-ext-diff", "origin/main...HEAD"],
+  [
+    "diff",
+    "--no-ext-diff",
+    "origin/main...HEAD",
+    "--",
+    ".",
+    ":(exclude).claude/**",
+  ],
   {
     encoding: "utf8",
     maxBuffer: 20_000_000,
