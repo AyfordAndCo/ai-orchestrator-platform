@@ -366,3 +366,36 @@ test("refuses a bundle that contains a symbolic link", async () => {
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("a failed seed leaves no partial .ecc-harness or staging directory", async () => {
+  if (process.platform === "win32") return; // chmod is a no-op on Windows
+
+  const fixture = await createFixture();
+  const { chmod, readdir } = await import("node:fs/promises");
+  try {
+    await chmod(fixture.workspacePath, 0o555); // read-only: staging mkdtemp fails
+    const provisioner = new EccHarnessProvisioner({
+      bundleRoot: fixture.bundleRoot,
+      allowedWorkspaceRoot: fixture.allowedWorkspaceRoot,
+    });
+
+    await assert.rejects(
+      provisioner.provision(request(fixture.workspacePath, "codex")),
+      (error) => {
+        assert.equal(error.code, agentHarnessErrorCodes.HARNESS_WRITE_FAILED);
+        return true;
+      },
+    );
+
+    await chmod(fixture.workspacePath, 0o755);
+    const entries = await readdir(fixture.workspacePath);
+    assert.equal(
+      entries.some((e) => e.startsWith(".ecc-harness")),
+      false,
+      "no .ecc-harness or .ecc-harness.staging-* left behind",
+    );
+  } finally {
+    await chmod(fixture.workspacePath, 0o755).catch(() => {});
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
